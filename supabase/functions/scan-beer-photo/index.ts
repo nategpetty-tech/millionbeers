@@ -164,7 +164,7 @@ Deno.serve(async (request) => {
     if (!response.ok) {
       const errorText = await response.text();
       console.error("OpenAI scanner provider error", response.status, errorText);
-      return json(unavailable(`OpenAI scanner error ${response.status}: ${providerErrorMessage(errorText)}`, normalizedClaim), 200);
+      return json(uncertain(`OpenAI scanner error ${response.status}: ${providerErrorMessage(errorText)}`, normalizedClaim), 200);
     }
 
     const payload = await response.json();
@@ -186,7 +186,7 @@ Deno.serve(async (request) => {
     });
   } catch (error) {
     console.error("Scanner runtime error", error);
-    return json(unavailable(`Scanner runtime error: ${errorMessage(error)}`, 1), 200);
+    return json(uncertain(`Scanner runtime error: ${errorMessage(error)}`, 1), 200);
   }
 });
 
@@ -206,6 +206,17 @@ function unavailable(explanation: string, claimedCount: number): ScanResponse {
     confidence: 0,
     claimedCount,
     status: "unavailable",
+    explanation,
+    boxes: []
+  };
+}
+
+function uncertain(explanation: string, claimedCount: number): ScanResponse {
+  return {
+    detectedCount: 0,
+    confidence: 0,
+    claimedCount,
+    status: "uncertain",
     explanation,
     boxes: []
   };
