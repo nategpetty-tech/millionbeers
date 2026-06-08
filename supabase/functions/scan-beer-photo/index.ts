@@ -146,7 +146,7 @@ Deno.serve(async (request) => {
               {
                 type: "text",
                 text:
-                  "Estimate the number of beers visible in this photo. Return a count plus one normalized box for each counted beer. Be conservative when the object is blocked, empty, non-alcoholic, or ambiguous. Boxes must surround only the counted beer object, not a person's hand or the whole table."
+                  "Estimate the number of beers visible in this photo. Return a count plus one normalized box for each counted beer. Be very conservative. A counted beer must be a visible can, bottle, glass, cup, or pour that likely contains beer. Do not count or box people, faces, heads, hands, phones, furniture, speakers, decor, shadows, or background objects. Each box must tightly surround only the beer container or beer glass. If you are not sure where the beer container is, return lower confidence below 0.45 and use no box for that object."
               },
               {
                 type: "image_url",
@@ -224,6 +224,7 @@ function uncertain(explanation: string, claimedCount: number): ScanResponse {
 
 function statusFor(detectedCount: number, claimedCount: number, confidence: number): ScanStatus {
   if (confidence < 0.45 || detectedCount < 1) return "uncertain";
+  if (confidence < 0.92) return "uncertain";
   return detectedCount === claimedCount ? "confirmed" : "mismatch";
 }
 
