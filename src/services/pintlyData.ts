@@ -65,6 +65,10 @@ type CheckInRow = {
   note: string | null;
   photo_url: string | null;
   photo_storage_path: string | null;
+  scanned_beer_count: number | null;
+  scan_confidence: number | null;
+  scan_status: BeerCheckIn["scanStatus"] | null;
+  scan_boxes: BeerCheckIn["scanBoxes"] | null;
   created_at: string;
   profiles?: ProfileRow | ProfileRow[] | null;
   check_in_groups?: CheckInGroupRow[];
@@ -238,6 +242,10 @@ export async function createRemoteCheckIn(input: CheckInInput, localCheckIn: Bee
     note: localCheckIn.note ?? null,
     photo_url: localCheckIn.photoUrl ?? null,
     photo_storage_path: localCheckIn.photoStoragePath ?? null,
+    scanned_beer_count: localCheckIn.scannedBeerCount ?? null,
+    scan_confidence: localCheckIn.scanConfidence ?? null,
+    scan_status: localCheckIn.scanStatus ?? null,
+    scan_boxes: localCheckIn.scanBoxes ?? null,
     created_at: localCheckIn.createdAt
   });
   if (error) throw error;
@@ -353,6 +361,10 @@ async function mapCheckInRow(row: CheckInRow): Promise<BeerCheckIn> {
     note: row.note ?? undefined,
     photoUrl: signedPhotoUrl ?? row.photo_url ?? undefined,
     photoStoragePath: row.photo_storage_path ?? undefined,
+    scannedBeerCount: row.scanned_beer_count ?? undefined,
+    scanConfidence: row.scan_confidence ?? undefined,
+    scanStatus: row.scan_status ?? undefined,
+    scanBoxes: row.scan_boxes ?? undefined,
     groupIds: (row.check_in_groups ?? []).map((item) => item.group_id),
     createdAt: row.created_at,
     reactions: reactedBy.length,

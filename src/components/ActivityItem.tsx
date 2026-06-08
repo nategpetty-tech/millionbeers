@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Alert, Image } from "react-native";
 import { Modal, Pressable, Text, View } from "react-native";
 import { Avatar } from "@/components/Avatar";
+import { ScanBoxesOverlay } from "@/components/ScanBoxesOverlay";
 import { BeerCheckIn } from "@/types";
 import { theme } from "@/theme";
 import { broadPlaceLabel, timeAgo } from "@/utils/format";
@@ -21,14 +22,23 @@ export function ActivityItem({ item, currentUserId, onReact, onDelete, variant =
   const photoSource = item.photoUrl ?? item.photoUri;
   const placeLabel = broadPlaceLabel(item.location);
   const normalizedBrewery = item.brewery.toLowerCase();
-  const showBrewery = item.brewery && !normalizedBrewery.includes("check-in");
-  const isGenericPhotoStamp = item.beerName.trim().toLowerCase() === "photo stamp";
+  const showBrewery = item.brewery && !normalizedBrewery.includes("check-in") && !normalizedBrewery.includes("pintly log");
+  const isGenericPhotoStamp = ["photo stamp", "beer log"].includes(item.beerName.trim().toLowerCase());
   const loggedCopy = `logged ${item.quantity} beer${item.quantity === 1 ? "" : "s"}`;
   const [imageFailed, setImageFailed] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
+  const [photoSize, setPhotoSize] = useState<{ width: number; height: number } | undefined>();
 
   useEffect(() => {
     setImageFailed(false);
+    setPhotoSize(undefined);
+    if (photoSource) {
+      Image.getSize(
+        photoSource,
+        (width, height) => setPhotoSize({ width, height }),
+        () => setPhotoSize(undefined)
+      );
+    }
   }, [item.id, photoSource]);
 
   function confirmDelete() {
@@ -72,10 +82,17 @@ export function ActivityItem({ item, currentUserId, onReact, onDelete, variant =
         </View>
       </View>
       {variant === "photo" ? (
-        <PhotoPanel photoSource={photoSource} imageFailed={imageFailed} onPress={() => setPhotoOpen(true)} onError={() => setImageFailed(true)} />
+        <PhotoPanel
+          item={item}
+          photoSource={photoSource}
+          photoSize={photoSize}
+          imageFailed={imageFailed}
+          onPress={() => setPhotoOpen(true)}
+          onError={() => setImageFailed(true)}
+        />
       ) : null}
       {item.note ? <Text style={{ color: theme.colors.muted, marginTop: 12, lineHeight: 20 }}>{item.note}</Text> : null}
-      {item.quantity > 1 && !isGenericPhotoStamp ? (
+      {item.quantity > 1 ? (
         <View
           style={{
             alignSelf: "flex-start",
@@ -91,6 +108,7 @@ export function ActivityItem({ item, currentUserId, onReact, onDelete, variant =
           <Text style={{ color: theme.colors.neon, fontWeight: "900", fontSize: 12 }}>{item.quantity} beers counted</Text>
         </View>
       ) : null}
+      {item.scanStatus ? <ScanResultPill item={item} /> : null}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
         <View style={{ flex: 1, paddingRight: 10 }}>
           <Text style={{ color: theme.colors.dim, fontSize: 12 }}>{placeLabel}</Text>
@@ -112,7 +130,7 @@ export function ActivityItem({ item, currentUserId, onReact, onDelete, variant =
           <Text style={{ color: reacted ? theme.colors.neon : theme.colors.muted, fontWeight: "800" }}>{item.reactions}</Text>
         </Pressable>
       </View>
-      <PhotoViewer visible={photoOpen && Boolean(photoSource) && !imageFailed} photoSource={photoSource} onClose={() => setPhotoOpen(false)} />
+      <PhotoViewer visible={photoOpen && Boolean(photoSource) && !imageFailed} item={item} photoSource={photoSource} photoSize={photoSize} onClose={() => setPhotoOpen(false)} />
     </View>
   );
 }
@@ -143,9 +161,29 @@ function PhotoThumb({ photoSource, imageFailed, onPress, onError }: { photoSourc
   );
 }
 
-function PhotoPanel({ photoSource, imageFailed, onPress, onError }: { photoSource?: string; imageFailed: boolean; onPress: () => void; onError: () => void }) {
+function PhotoPanel({
+  item,
+  photoSource,
+  photoSize,
+  imageFailed,
+  onPress,
+  onError
+}: {
+  item: BeerCheckIn;
+  photoSource?: string;
+  photoSize?: { width: number; height: number };
+  imageFailed: boolean;
+  onPress: () => void;
+  onError: () => void;
+}) {
+  const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
+
   return (
     <View
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setPreviewSize({ width, height });
+      }}
       style={{
         marginTop: 12,
         borderRadius: theme.radius.lg,
@@ -158,7 +196,8 @@ function PhotoPanel({ photoSource, imageFailed, onPress, onError }: { photoSourc
     >
       {photoSource && !imageFailed ? (
         <Pressable onPress={onPress} style={({ pressed }) => ({ opacity: pressed ? 0.9 : 1 })}>
-          <Image source={{ uri: photoSource }} onError={onError} style={{ width: "100%", aspectRatio: 4 / 3 }} resizeMode="cover" />
+          <Image source={{ uri: photoSource }} onError={onError} style={{ width: "100%", aspectRatio: 4 / 3 }} resizeMode="contain" />
+          <ScanBoxesOverlay boxes={item.scanBoxes} photoSize={photoSize} previewSize={previewSize} />
         </Pressable>
       ) : (
         <View style={{ minHeight: 178, alignItems: "center", justifyContent: "center", padding: 18 }}>
@@ -170,7 +209,51 @@ function PhotoPanel({ photoSource, imageFailed, onPress, onError }: { photoSourc
   );
 }
 
-function PhotoViewer({ visible, photoSource, onClose }: { visible: boolean; photoSource?: string; onClose: () => void }) {
+function ScanResultPill({ item }: { item: BeerCheckIn }) {
+  const copy = scanResultCopy(item);
+  if (!copy) return null;
+  return (
+    <View
+      style={{
+        alignSelf: "flex-start",
+        marginTop: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: theme.radius.pill,
+        backgroundColor: item.scanStatus === "confirmed" ? theme.colors.neonSoft : theme.colors.cardSoft,
+        borderWidth: 1,
+        borderColor: item.scanStatus === "confirmed" ? theme.colors.neon : theme.colors.border
+      }}
+    >
+      <Text style={{ color: item.scanStatus === "confirmed" ? theme.colors.neon : theme.colors.gold, fontWeight: "900", fontSize: 12 }}>
+        {copy}
+      </Text>
+    </View>
+  );
+}
+
+function scanResultCopy(item: BeerCheckIn) {
+  if (item.scanStatus === "confirmed") return "Scanner confirmed";
+  if (item.scanStatus === "mismatch") return `Scanner saw ${item.scannedBeerCount ?? "a different count"}`;
+  if (item.scanStatus === "uncertain") return "Scanner unsure";
+  if (item.scanStatus === "unavailable") return "Scanner unavailable";
+  return undefined;
+}
+
+function PhotoViewer({
+  visible,
+  item,
+  photoSource,
+  photoSize,
+  onClose
+}: {
+  visible: boolean;
+  item: BeerCheckIn;
+  photoSource?: string;
+  photoSize?: { width: number; height: number };
+  onClose: () => void;
+}) {
+  const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
   if (!photoSource) return null;
 
   return (
@@ -179,7 +262,16 @@ function PhotoViewer({ visible, photoSource, onClose }: { visible: boolean; phot
         <Pressable onPress={onClose} style={{ position: "absolute", top: 54, right: 22, zIndex: 2, padding: 8 }}>
           <Ionicons name="close-circle" color={theme.colors.text} size={34} />
         </Pressable>
-        <Image source={{ uri: photoSource }} style={{ width: "100%", aspectRatio: 3 / 4, borderRadius: theme.radius.lg }} resizeMode="contain" />
+        <View
+          onLayout={(event) => {
+            const { width, height } = event.nativeEvent.layout;
+            setPreviewSize({ width, height });
+          }}
+          style={{ width: "100%", aspectRatio: 3 / 4, borderRadius: theme.radius.lg, overflow: "hidden" }}
+        >
+          <Image source={{ uri: photoSource }} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
+          <ScanBoxesOverlay boxes={item.scanBoxes} photoSize={photoSize} previewSize={previewSize} />
+        </View>
       </View>
     </Modal>
   );

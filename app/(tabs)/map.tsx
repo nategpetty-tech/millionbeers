@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useMemo, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Image, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { BeerMap, BeerMapPin } from "@/components/BeerMap";
 import { CheckInModal } from "@/components/CheckInModal";
@@ -10,87 +10,48 @@ import { SectionTitle } from "@/components/SectionTitle";
 import { StatCard } from "@/components/StatCard";
 import { usePassport } from "@/store/passportStore";
 import { theme } from "@/theme";
+import type { BeerCheckIn } from "@/types";
+import { broadPlaceLabel } from "@/utils/format";
+
+const SAME_PLACE_METERS = 60;
+
+type PinPhoto = {
+  id: string;
+  uri: string;
+  createdAt: string;
+  beerCount: number;
+  userName: string;
+};
 
 type Pin = {
   id: string;
-  brewery: string;
+  title: string;
   city: string;
   state?: string;
+  country?: string;
   latitude?: number;
   longitude?: number;
   hasCoordinates: boolean;
   visitCount: number;
   beerCount: number;
   visitors: string[];
-  beers: string[];
+  photos: PinPhoto[];
   x: number;
   y: number;
-};
-
-const knownPositions: Record<string, { x: number; y: number }> = {
-  "Goose Island Beer Co.": { x: 47, y: 45 },
-  "Half Acre Beer Co.": { x: 55, y: 25 },
-  "Revolution Brewing": { x: 43, y: 36 },
-  "Maplewood Brewery": { x: 51, y: 33 },
-  "Moot Court Brewing": { x: 61, y: 48 },
-  "Hidden Key Brewery": { x: 37, y: 56 }
+  latestAt: string;
 };
 
 export default function MapScreen() {
   const { checkIns, user } = usePassport();
   const [checkInOpen, setCheckInOpen] = useState(false);
   const scopedCheckIns = useMemo(() => checkIns.filter((item) => item.userId === user.id), [checkIns, user.id]);
-  const pins = useMemo(() => {
-    const coordinateItems = scopedCheckIns.filter(
-      (item) => typeof item.location.latitude === "number" && typeof item.location.longitude === "number"
-    );
-    const minLat = coordinateItems.length ? Math.min(...coordinateItems.map((item) => item.location.latitude ?? 0)) : 0;
-    const maxLat = coordinateItems.length ? Math.max(...coordinateItems.map((item) => item.location.latitude ?? 0)) : 0;
-    const minLon = coordinateItems.length ? Math.min(...coordinateItems.map((item) => item.location.longitude ?? 0)) : 0;
-    const maxLon = coordinateItems.length ? Math.max(...coordinateItems.map((item) => item.location.longitude ?? 0)) : 0;
-    const byBrewery = scopedCheckIns.reduce<Record<string, Pin>>((acc, item, index) => {
-      const hasCoordinates = typeof item.location.latitude === "number" && typeof item.location.longitude === "number";
-      const coordinatePosition = hasCoordinates
-        ? {
-            x: maxLon === minLon ? 50 : 18 + (((item.location.longitude ?? 0) - minLon) / (maxLon - minLon)) * 64,
-            y: maxLat === minLat ? 50 : 18 + ((maxLat - (item.location.latitude ?? 0)) / (maxLat - minLat)) * 64
-          }
-        : undefined;
-      const position = coordinatePosition ?? knownPositions[item.brewery] ?? {
-        x: 28 + ((index * 17) % 46),
-        y: 22 + ((index * 19) % 52)
-      };
-      if (!acc[item.brewery]) {
-        acc[item.brewery] = {
-          id: item.brewery,
-          brewery: item.brewery,
-          city: item.location.city,
-          state: item.location.state,
-          latitude: item.location.latitude,
-          longitude: item.location.longitude,
-          hasCoordinates,
-          visitCount: 0,
-          beerCount: 0,
-          visitors: [],
-          beers: [],
-          x: position.x,
-          y: position.y
-        };
-      }
-      acc[item.brewery].visitCount += 1;
-      acc[item.brewery].beerCount += item.quantity ?? 1;
-      if (!acc[item.brewery].visitors.includes(item.userName)) acc[item.brewery].visitors.push(item.userName);
-      if (!acc[item.brewery].beers.includes(item.beerName)) acc[item.brewery].beers.push(item.beerName);
-      return acc;
-    }, {});
-    return Object.values(byBrewery).sort((a, b) => b.visitCount - a.visitCount);
-  }, [scopedCheckIns]);
+  const pins = useMemo(() => buildPlacePins(scopedCheckIns), [scopedCheckIns]);
 
-  const cities = useMemo(() => ["All", ...Array.from(new Set(pins.map((pin) => pin.city)))], [pins]);
+  const cities = useMemo(() => ["All", ...Array.from(new Set(pins.map((pin) => pin.city).filter(Boolean)))], [pins]);
   const [city, setCity] = useState("All");
   const filteredPins = city === "All" ? pins : pins.filter((pin) => pin.city === city);
   const [selected, setSelected] = useState<Pin | null>(filteredPins[0] ?? null);
-  const visibleSelected = selected && filteredPins.some((pin) => pin.brewery === selected.brewery) ? selected : filteredPins[0];
+  const visibleSelected = selected && filteredPins.some((pin) => pin.id === selected.id) ? selected : filteredPins[0];
   const summaryStats = useMemo(() => {
     const source = city === "All" ? scopedCheckIns : scopedCheckIns.filter((item) => item.location.city === city);
     return {
@@ -101,8 +62,8 @@ export default function MapScreen() {
   }, [city, scopedCheckIns]);
   const mapPins: BeerMapPin[] = filteredPins.map((pin) => ({
     id: pin.id,
-    title: pin.brewery,
-    subtitle: `${pin.city}${pin.state ? `, ${pin.state}` : ""}`,
+    title: pin.title,
+    subtitle: `${pin.beerCount} beers • ${pin.visitCount} logs`,
     latitude: pin.hasCoordinates ? pin.latitude : undefined,
     longitude: pin.hasCoordinates ? pin.longitude : undefined,
     beerCount: pin.beerCount
@@ -168,12 +129,12 @@ export default function MapScreen() {
           <SectionTitle title="Visited Places" detail="Tap a row to focus the atlas." />
           {filteredPins.map((pin) => (
             <Pressable
-              key={pin.brewery}
+              key={pin.id}
               onPress={() => setSelected(pin)}
               style={{
-                backgroundColor: visibleSelected?.brewery === pin.brewery ? theme.colors.neonSoft : theme.colors.card,
+                backgroundColor: visibleSelected?.id === pin.id ? theme.colors.neonSoft : theme.colors.card,
                 borderWidth: 1,
-                borderColor: visibleSelected?.brewery === pin.brewery ? theme.colors.neon : theme.colors.border,
+                borderColor: visibleSelected?.id === pin.id ? theme.colors.neon : theme.colors.border,
                 borderRadius: theme.radius.lg,
                 padding: 14
               }}
@@ -194,10 +155,9 @@ export default function MapScreen() {
                   <Ionicons name="location-outline" color={theme.colors.gold} size={22} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 16 }}>{pin.brewery}</Text>
+                  <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 16 }}>{pin.title}</Text>
                   <Text style={{ color: theme.colors.muted, marginTop: 3 }}>
-                    {pin.city}
-                    {pin.state ? `, ${pin.state}` : ""} • {pin.beerCount} beers
+                    {pin.beerCount} beers • {pin.photos.length} photos
                   </Text>
                 </View>
                 <Text style={{ color: theme.colors.neon, fontWeight: "900" }}>{pin.visitCount}x</Text>
@@ -211,7 +171,114 @@ export default function MapScreen() {
   );
 }
 
+function buildPlacePins(checkIns: BeerCheckIn[]) {
+  const coordinateItems = checkIns.filter((item) => hasCoordinates(item));
+  const minLat = coordinateItems.length ? Math.min(...coordinateItems.map((item) => item.location.latitude ?? 0)) : 0;
+  const maxLat = coordinateItems.length ? Math.max(...coordinateItems.map((item) => item.location.latitude ?? 0)) : 0;
+  const minLon = coordinateItems.length ? Math.min(...coordinateItems.map((item) => item.location.longitude ?? 0)) : 0;
+  const maxLon = coordinateItems.length ? Math.max(...coordinateItems.map((item) => item.location.longitude ?? 0)) : 0;
+  const pins: Pin[] = [];
+
+  checkIns
+    .slice()
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    .forEach((item, index) => {
+      const placeKey = fallbackPlaceKey(item);
+      const hasGps = hasCoordinates(item);
+      const pin = hasGps
+        ? pins.find(
+            (candidate) =>
+              candidate.hasCoordinates &&
+              typeof candidate.latitude === "number" &&
+              typeof candidate.longitude === "number" &&
+              distanceMeters(candidate.latitude, candidate.longitude, item.location.latitude as number, item.location.longitude as number) <=
+                SAME_PLACE_METERS
+          )
+        : pins.find((candidate) => candidate.id === placeKey);
+
+      if (pin) {
+        addCheckInToPin(pin, item);
+        return;
+      }
+
+      const coordinatePosition = hasGps
+        ? {
+            x: maxLon === minLon ? 50 : 18 + (((item.location.longitude ?? 0) - minLon) / (maxLon - minLon)) * 64,
+            y: maxLat === minLat ? 50 : 18 + ((maxLat - (item.location.latitude ?? 0)) / (maxLat - minLat)) * 64
+          }
+        : undefined;
+      pins.push({
+        id: hasGps ? `gps-${item.id}` : placeKey,
+        title: broadPlaceLabel(item.location),
+        city: item.location.city,
+        state: item.location.state,
+        country: item.location.country,
+        latitude: item.location.latitude,
+        longitude: item.location.longitude,
+        hasCoordinates: hasGps,
+        visitCount: 0,
+        beerCount: 0,
+        visitors: [],
+        photos: [],
+        x: coordinatePosition?.x ?? 28 + ((index * 17) % 46),
+        y: coordinatePosition?.y ?? 22 + ((index * 19) % 52),
+        latestAt: item.createdAt
+      });
+      addCheckInToPin(pins[pins.length - 1], item);
+    });
+
+  return pins.sort((a, b) => new Date(b.latestAt).getTime() - new Date(a.latestAt).getTime());
+}
+
+function addCheckInToPin(pin: Pin, item: BeerCheckIn) {
+  const previousVisits = pin.visitCount;
+  pin.visitCount += 1;
+  pin.beerCount += item.quantity ?? 1;
+  pin.latestAt = new Date(item.createdAt).getTime() > new Date(pin.latestAt).getTime() ? item.createdAt : pin.latestAt;
+  if (!pin.visitors.includes(item.userName)) pin.visitors.push(item.userName);
+
+  if (pin.hasCoordinates && hasCoordinates(item) && typeof pin.latitude === "number" && typeof pin.longitude === "number") {
+    pin.latitude = (pin.latitude * previousVisits + (item.location.latitude as number)) / pin.visitCount;
+    pin.longitude = (pin.longitude * previousVisits + (item.location.longitude as number)) / pin.visitCount;
+  }
+
+  const photoUri = item.photoUrl ?? item.photoUri;
+  if (photoUri) {
+    pin.photos.unshift({
+      id: item.id,
+      uri: photoUri,
+      createdAt: item.createdAt,
+      beerCount: item.quantity ?? 1,
+      userName: item.userName
+    });
+  }
+}
+
+function fallbackPlaceKey(item: BeerCheckIn) {
+  return `place-${[item.location.city, item.location.state, item.location.country].map((part) => part?.trim().toLowerCase() || "unknown").join("-")}`;
+}
+
+function hasCoordinates(item: BeerCheckIn) {
+  return typeof item.location.latitude === "number" && typeof item.location.longitude === "number";
+}
+
+function distanceMeters(latA: number, lonA: number, latB: number, lonB: number) {
+  const earthRadiusMeters = 6371000;
+  const latDelta = toRadians(latB - latA);
+  const lonDelta = toRadians(lonB - lonA);
+  const a =
+    Math.sin(latDelta / 2) * Math.sin(latDelta / 2) +
+    Math.cos(toRadians(latA)) * Math.cos(toRadians(latB)) * Math.sin(lonDelta / 2) * Math.sin(lonDelta / 2);
+  return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function toRadians(value: number) {
+  return (value * Math.PI) / 180;
+}
+
 function LocationSummary({ pin, onEmptyAction }: { pin?: Pin | null; onEmptyAction?: () => void }) {
+  const [previewPhoto, setPreviewPhoto] = useState<PinPhoto | null>(null);
+
   if (!pin) {
     return (
       <View>
@@ -239,22 +306,80 @@ function LocationSummary({ pin, onEmptyAction }: { pin?: Pin | null; onEmptyActi
   return (
     <View>
       <Text style={{ color: theme.colors.gold, fontWeight: "900", letterSpacing: 1, fontSize: 12 }}>SELECTED STAMP</Text>
-      <Text style={{ color: theme.colors.text, fontSize: 19, fontWeight: "900", marginTop: 5 }}>{pin.brewery}</Text>
+      <Text style={{ color: theme.colors.text, fontSize: 19, fontWeight: "900", marginTop: 5 }}>{pin.title}</Text>
       <Text style={{ color: theme.colors.muted, marginTop: 3 }}>
-        {pin.city}
-        {pin.state ? `, ${pin.state}` : ""} • {pin.visitors.join(", ")}
+        {pin.visitors.join(", ")}
       </Text>
       <Text style={{ color: pin.hasCoordinates ? theme.colors.neon : theme.colors.dim, marginTop: 5, fontSize: 12, fontWeight: "800" }}>
-        {pin.hasCoordinates ? "GPS photo location" : "City-based location"}
+        {pin.hasCoordinates ? `GPS clustered within ${SAME_PLACE_METERS}m` : "City-based location"}
       </Text>
       <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
         <Mini label="Visits" value={pin.visitCount} />
         <Mini label="Beers" value={pin.beerCount} />
+        <Mini label="Photos" value={pin.photos.length} />
       </View>
       <View style={{ marginTop: 12 }}>
         <ProgressBar current={Math.min(pin.beerCount, 10)} goal={10} color={theme.colors.gold} />
-        <Text style={{ color: theme.colors.dim, marginTop: 6, fontSize: 12 }}>{pin.beers.slice(0, 3).join(" • ")}</Text>
+        <Text style={{ color: theme.colors.dim, marginTop: 6, fontSize: 12 }}>Each pin combines logs from the same physical place.</Text>
       </View>
+      <View style={{ marginTop: 14 }}>
+        <Text style={{ color: theme.colors.text, fontWeight: "900", marginBottom: 10 }}>Photos from this place</Text>
+        {pin.photos.length ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              {pin.photos.map((photo) => (
+                <Pressable key={photo.id} onPress={() => setPreviewPhoto(photo)}>
+                  <Image
+                    source={{ uri: photo.uri }}
+                    style={{
+                      width: 92,
+                      height: 116,
+                      borderRadius: theme.radius.md,
+                      backgroundColor: theme.colors.surface
+                    }}
+                  />
+                  <View
+                    style={{
+                      position: "absolute",
+                      left: 6,
+                      bottom: 6,
+                      borderRadius: theme.radius.pill,
+                      backgroundColor: "rgba(0,0,0,0.72)",
+                      paddingHorizontal: 8,
+                      paddingVertical: 4
+                    }}
+                  >
+                    <Text style={{ color: theme.colors.neon, fontSize: 11, fontWeight: "900" }}>{photo.beerCount} beers</Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          </ScrollView>
+        ) : (
+          <Text style={{ color: theme.colors.muted, lineHeight: 20 }}>No photos were attached to the logs at this place yet.</Text>
+        )}
+      </View>
+      <Modal visible={Boolean(previewPhoto)} transparent animationType="fade" onRequestClose={() => setPreviewPhoto(null)}>
+        <Pressable
+          onPress={() => setPreviewPhoto(null)}
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.9)",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20
+          }}
+        >
+          {previewPhoto ? (
+            <Image
+              source={{ uri: previewPhoto.uri }}
+              resizeMode="contain"
+              style={{ width: "100%", height: "78%", borderRadius: theme.radius.lg }}
+            />
+          ) : null}
+          <Text style={{ color: theme.colors.text, fontWeight: "900", marginTop: 14 }}>Tap anywhere to close</Text>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

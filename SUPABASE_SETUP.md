@@ -89,7 +89,24 @@ Run `supabase_schema.sql` in the Supabase SQL Editor. This creates the profile, 
 
 This step is required for testers to see shared groups, shared group activity, approvals, and the app-wide global beer count. Without it, the app still opens and saves locally, but Supabase group/check-in sync will fail in the background.
 
-## 5. Restart Expo
+## 5. Beer Photo Scanner
+
+Deploy the Supabase Edge Function that counts visible beers in check-in photos:
+
+```sh
+supabase functions deploy scan-beer-photo
+supabase secrets set OPENAI_API_KEY=sk-your-server-side-key
+```
+
+The scanner returns a suggested beer count, confidence, and normalized detection boxes that Pintly draws over the photo preview. The function defaults to `gpt-4.1-mini`. To use a different OpenAI vision-capable model, set:
+
+```sh
+supabase secrets set OPENAI_VISION_MODEL=gpt-4.1-mini
+```
+
+Keep `OPENAI_API_KEY` out of Expo `.env` files. The mobile app calls the Supabase function, and the function calls OpenAI from the server side.
+
+## 6. Restart Expo
 
 Expo reads public env vars at bundle time. After editing `.env`, restart the dev server:
 

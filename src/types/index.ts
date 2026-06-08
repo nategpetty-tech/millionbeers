@@ -103,6 +103,10 @@ export type BeerCheckIn = {
   photoUri?: string;
   photoUrl?: string;
   photoStoragePath?: string;
+  scannedBeerCount?: number;
+  scanConfidence?: number;
+  scanStatus?: "confirmed" | "mismatch" | "uncertain" | "unavailable";
+  scanBoxes?: BeerScanBox[];
   groupIds: string[];
   createdAt: string;
   reactions: number;
@@ -146,8 +150,21 @@ export type CheckInInput = {
   photoUri?: string;
   photoUrl?: string;
   photoStoragePath?: string;
+  scannedBeerCount?: number;
+  scanConfidence?: number;
+  scanStatus?: "confirmed" | "mismatch" | "uncertain" | "unavailable";
+  scanBoxes?: BeerScanBox[];
   latitude?: number;
   longitude?: number;
+};
+
+export type BeerScanBox = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  confidence: number;
+  label: string;
 };
 
 export type CreateGroupInput = {

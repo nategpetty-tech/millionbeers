@@ -2,7 +2,7 @@ create extension if not exists pgcrypto;
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
-  display_name text not null default 'Hopp''d User',
+  display_name text not null default 'Pintly User',
   avatar text not null default 'HU',
   avatar_url text,
   avatar_storage_path text,
@@ -12,6 +12,7 @@ create table if not exists public.profiles (
 
 alter table public.profiles add column if not exists avatar_url text;
 alter table public.profiles add column if not exists avatar_storage_path text;
+alter table public.profiles alter column display_name set default 'Pintly User';
 
 create table if not exists public.groups (
   id uuid primary key default gen_random_uuid(),
@@ -51,8 +52,8 @@ create table if not exists public.group_join_requests (
 create table if not exists public.check_ins (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
-  beer_name text not null default 'Photo stamp',
-  brewery text not null default 'Hopp''d check-in',
+  beer_name text not null default 'Beer log',
+  brewery text not null default 'Pintly log',
   style text not null default 'Other',
   quantity integer not null default 1 check (quantity between 1 and 24),
   abv numeric,
@@ -65,10 +66,45 @@ create table if not exists public.check_ins (
   note text,
   photo_url text,
   photo_storage_path text,
+  scanned_beer_count integer check (scanned_beer_count is null or scanned_beer_count between 0 and 24),
+  scan_confidence numeric check (scan_confidence is null or (scan_confidence >= 0 and scan_confidence <= 1)),
+  scan_status text check (scan_status is null or scan_status in ('confirmed', 'mismatch', 'uncertain', 'unavailable')),
+  scan_boxes jsonb,
   created_at timestamptz not null default now()
 );
 
 alter table public.check_ins add column if not exists country text;
+alter table public.check_ins add column if not exists scanned_beer_count integer;
+alter table public.check_ins add column if not exists scan_confidence numeric;
+alter table public.check_ins add column if not exists scan_status text;
+alter table public.check_ins add column if not exists scan_boxes jsonb;
+alter table public.check_ins alter column beer_name set default 'Beer log';
+alter table public.check_ins alter column brewery set default 'Pintly log';
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'check_ins_scanned_beer_count_range'
+  ) then
+    alter table public.check_ins
+      add constraint check_ins_scanned_beer_count_range check (scanned_beer_count is null or scanned_beer_count between 0 and 24);
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'check_ins_scan_confidence_range'
+  ) then
+    alter table public.check_ins
+      add constraint check_ins_scan_confidence_range check (scan_confidence is null or (scan_confidence >= 0 and scan_confidence <= 1));
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'check_ins_scan_status_values'
+  ) then
+    alter table public.check_ins
+      add constraint check_ins_scan_status_values check (scan_status is null or scan_status in ('confirmed', 'mismatch', 'uncertain', 'unavailable'));
+  end if;
+end
+$$;
 
 create table if not exists public.check_in_groups (
   check_in_id uuid not null references public.check_ins(id) on delete cascade,
