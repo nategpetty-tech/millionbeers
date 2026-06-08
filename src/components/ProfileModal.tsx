@@ -3,6 +3,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Modal, Pressable, Text, TextInput, View } from "react-native";
 import { Avatar } from "@/components/Avatar";
+import { compressProfilePhoto } from "@/services/photoCompression";
 import { isProfilePhotoStorageConfigured, uploadProfilePhoto } from "@/services/photoStorage";
 import { usePassport } from "@/store/passportStore";
 import { theme } from "@/theme";
@@ -42,7 +43,8 @@ export function ProfileModal({ visible, onClose }: Props) {
     });
 
     if (!result.canceled && result.assets[0]?.uri) {
-      setAvatarUri(result.assets[0].uri);
+      const compressed = await compressProfilePhoto(result.assets[0].uri);
+      setAvatarUri(compressed.uri);
       setAvatarStoragePath(undefined);
     }
   }

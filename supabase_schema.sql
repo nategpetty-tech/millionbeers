@@ -70,6 +70,7 @@ create table if not exists public.check_ins (
   scan_confidence numeric check (scan_confidence is null or (scan_confidence >= 0 and scan_confidence <= 1)),
   scan_status text check (scan_status is null or scan_status in ('confirmed', 'mismatch', 'uncertain', 'unavailable')),
   scan_boxes jsonb,
+  count_source text not null default 'manual' check (count_source in ('scanner', 'manual')),
   created_at timestamptz not null default now()
 );
 
@@ -78,8 +79,10 @@ alter table public.check_ins add column if not exists scanned_beer_count integer
 alter table public.check_ins add column if not exists scan_confidence numeric;
 alter table public.check_ins add column if not exists scan_status text;
 alter table public.check_ins add column if not exists scan_boxes jsonb;
+alter table public.check_ins add column if not exists count_source text not null default 'manual';
 alter table public.check_ins alter column beer_name set default 'Beer log';
 alter table public.check_ins alter column brewery set default 'Pintly log';
+alter table public.check_ins alter column count_source set default 'manual';
 
 do $$
 begin
@@ -102,6 +105,13 @@ begin
   ) then
     alter table public.check_ins
       add constraint check_ins_scan_status_values check (scan_status is null or scan_status in ('confirmed', 'mismatch', 'uncertain', 'unavailable'));
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'check_ins_count_source_values'
+  ) then
+    alter table public.check_ins
+      add constraint check_ins_count_source_values check (count_source in ('scanner', 'manual'));
   end if;
 end
 $$;
@@ -301,6 +311,13 @@ create policy "users can delete own check-ins"
 on public.check_ins for delete
 to authenticated
 using (user_id = auth.uid());
+
+drop policy if exists "users can update own check-ins" on public.check_ins;
+create policy "users can update own check-ins"
+on public.check_ins for update
+to authenticated
+using (user_id = auth.uid())
+with check (user_id = auth.uid());
 
 drop policy if exists "members can see check-in group links" on public.check_in_groups;
 create policy "members can see check-in group links"

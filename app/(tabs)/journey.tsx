@@ -16,7 +16,7 @@ import { formatNumber, percent } from "@/utils/format";
 export default function JourneyScreen() {
   const router = useRouter();
   const [checkInOpen, setCheckInOpen] = useState(false);
-  const { user, groups, globalCount, challenges, checkIns, initializeSeedData, reactToCheckIn, deleteCheckIn } = usePassport();
+  const { user, groups, globalCount, challenges, checkIns, initializeSeedData, reactToCheckIn, updateCheckIn, deleteCheckIn } = usePassport();
   const nextChallenge = challenges.find((challenge) => challenge.current < challenge.goal) ?? challenges[0];
   const memberGroups = groups.filter((group) => group.members.some((member) => member.userId === user.id));
   const activeGroups = memberGroups.slice(0, 3);
@@ -113,7 +113,7 @@ export default function JourneyScreen() {
                     </Text>
                   </View>
                 ) : null}
-                <ActivityItem item={checkIn} currentUserId={user.id} onReact={reactToCheckIn} onDelete={deleteCheckIn} />
+                <ActivityItem item={checkIn} currentUserId={user.id} onReact={reactToCheckIn} onEdit={updateCheckIn} onDelete={deleteCheckIn} />
               </View>
             ))
           ) : (

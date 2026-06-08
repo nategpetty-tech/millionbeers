@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
-import { Image, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Image, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CreateGroupModal } from "@/components/CreateGroupModal";
 import { EmptyState } from "@/components/EmptyState";
@@ -16,6 +16,15 @@ export default function GroupsScreen() {
   const [searchingCloud, setSearchingCloud] = useState(false);
   const normalizedQuery = query.toLowerCase().trim();
   const myGroups = useMemo(() => groups.filter((group) => group.members.some((member) => member.userId === user.id)), [groups, user.id]);
+  const pendingMemberships = useMemo(
+    () =>
+      groups.filter(
+        (group) =>
+          !group.members.some((member) => member.userId === user.id) &&
+          group.pendingRequests.some((request) => request.userId === user.id && request.status === "pending")
+      ),
+    [groups, user.id]
+  );
   const searchResults = useMemo(
     () =>
       groups.filter((group) => {
@@ -75,6 +84,49 @@ export default function GroupsScreen() {
             />
             {searchingCloud ? <Ionicons name="sync-outline" color={theme.colors.neon} size={18} /> : null}
           </View>
+          <View
+            style={{
+              backgroundColor: theme.colors.card,
+              borderRadius: theme.radius.md,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              padding: 12,
+              marginBottom: 16
+            }}
+          >
+            <Text style={{ color: theme.colors.text, fontWeight: "900" }}>Join a group</Text>
+            <Text style={{ color: theme.colors.muted, marginTop: 4, lineHeight: 19 }}>
+              Search a group name or paste an invite code. Founders approve requests before group photos and feeds become visible.
+            </Text>
+          </View>
+
+          {pendingMemberships.length ? (
+            <View style={{ marginBottom: 16 }}>
+              <Text style={{ color: theme.colors.gold, fontSize: 12, fontWeight: "900", marginBottom: 10 }}>WAITING FOR APPROVAL</Text>
+              {pendingMemberships.map((group) => (
+                <View
+                  key={group.id}
+                  style={{
+                    backgroundColor: theme.colors.card,
+                    borderRadius: theme.radius.md,
+                    borderWidth: 1,
+                    borderColor: theme.colors.border,
+                    padding: 12,
+                    marginBottom: 8,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 10
+                  }}
+                >
+                  <Ionicons name="hourglass-outline" color={theme.colors.gold} size={18} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: theme.colors.text, fontWeight: "900" }}>{group.name}</Text>
+                    <Text style={{ color: theme.colors.muted, marginTop: 2 }}>Founder approval pending</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : null}
 
           {showingSearch ? (
             <View>
@@ -87,6 +139,7 @@ export default function GroupsScreen() {
               {searchResults.length ? <Text style={{ color: theme.colors.gold, fontSize: 12, fontWeight: "900", marginBottom: 10 }}>REQUEST TO JOIN</Text> : null}
               {searchResults.map((group) => {
                 const pending = group.pendingRequests.some((request) => request.userId === user.id && request.status === "pending");
+                const source = group.inviteCode.toLowerCase().includes(normalizedQuery) ? "invite" : "search";
                 return (
                   <View
                     key={group.id}
@@ -118,10 +171,16 @@ export default function GroupsScreen() {
                         <Text style={{ color: theme.colors.muted, marginTop: 3 }}>
                           {group.memberCount} members • {group.privacy}
                         </Text>
+                        <Text style={{ color: theme.colors.dim, marginTop: 2, fontSize: 12 }}>
+                          {source === "invite" ? "Invite code matched" : "Name matched"} • founder approval required
+                        </Text>
                       </View>
                       <Pressable
                         disabled={pending}
-                        onPress={() => requestJoinGroup(group.id, group.inviteCode.toLowerCase().includes(normalizedQuery) ? "invite" : "search")}
+                        onPress={() => {
+                          requestJoinGroup(group.id, source);
+                          Alert.alert("Request sent", `${group.name}'s founder can approve you in the group request queue.`);
+                        }}
                         style={{
                           backgroundColor: pending ? theme.colors.cardSoft : theme.colors.neon,
                           borderRadius: theme.radius.pill,
@@ -130,7 +189,7 @@ export default function GroupsScreen() {
                         }}
                       >
                         <Text style={{ color: pending ? theme.colors.dim : theme.colors.ink, fontWeight: "900" }}>
-                          {pending ? "Pending" : "Request"}
+                          {pending ? "Pending" : source === "invite" ? "Use Invite" : "Request"}
                         </Text>
                       </Pressable>
                     </View>

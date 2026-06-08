@@ -10,6 +10,7 @@ import {
   rejectRemoteJoinRequest,
   requestRemoteGroupJoin,
   toggleRemoteReaction,
+  updateRemoteCheckIn,
   updateRemoteGroupBackdrop,
   upsertProfile
 } from "@/services/pintlyData";
@@ -25,6 +26,7 @@ import {
   GroupStats,
   UpdateProfileInput,
   UpdateGroupBackdropInput,
+  UpdateCheckInInput,
   User
 } from "@/types";
 import { makeId, makeUuid } from "@/utils/format";
@@ -51,6 +53,7 @@ type PassportActions = {
   approveJoinRequest: (groupId: string, requestId: string) => void;
   rejectJoinRequest: (groupId: string, requestId: string) => void;
   checkInBeer: (input: CheckInInput) => CheckInResult;
+  updateCheckIn: (checkInId: string, input: UpdateCheckInInput) => void;
   deleteCheckIn: (checkInId: string) => void;
   reactToCheckIn: (checkInId: string) => void;
   getGroupLeaderboard: (groupId: string, mode?: "beers" | "checkIns") => GroupMember[];
@@ -576,6 +579,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         scanConfidence: input.scanConfidence,
         scanStatus: input.scanStatus,
         scanBoxes: input.scanBoxes,
+        countSource: input.countSource ?? (input.scanStatus === "confirmed" ? "scanner" : "manual"),
         groupIds: input.groupIds,
         createdAt: new Date().toISOString(),
         reactions: 0,
@@ -623,6 +627,50 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       return { checkIn, ...projectedUnlocks };
     },
     [persist, state.badges, state.challenges, state.checkIns, state.user]
+  );
+
+  const updateCheckIn = useCallback(
+    (checkInId: string, input: UpdateCheckInInput) => {
+      setState((current) => {
+        const target = current.checkIns.find((checkIn) => checkIn.id === checkInId);
+        if (!target || target.userId !== current.user.id) return current;
+        const quantity = Math.max(1, Math.min(24, Math.floor(input.quantity)));
+        const nextCheckIns = current.checkIns.map((checkIn) =>
+          checkIn.id === checkInId
+            ? {
+                ...checkIn,
+                quantity,
+                note: input.note?.trim() || undefined,
+                countSource: "manual" as const,
+                scanStatus:
+                  typeof checkIn.scannedBeerCount === "number"
+                    ? checkIn.scannedBeerCount === quantity
+                      ? "confirmed"
+                      : "mismatch"
+                    : checkIn.scanStatus
+              }
+            : checkIn
+        );
+        const derived = deriveCounts(current.user, nextCheckIns, current.groups, seedGlobalCount);
+        const nextChallenges = deriveChallenges(current.challenges, nextCheckIns);
+        const next = {
+          ...current,
+          checkIns: nextCheckIns,
+          groups: derived.groups,
+          user: {
+            ...derived.user,
+            badges: deriveEarnedBadges(nextChallenges, current.badges, derived.user),
+            challengesCompleted: nextChallenges.filter((challenge) => challenge.current >= challenge.goal).length
+          },
+          challenges: nextChallenges,
+          globalCount: derived.globalCount
+        };
+        void persist(next);
+        return next;
+      });
+      syncRemote(updateRemoteCheckIn(checkInId, input));
+    },
+    [persist]
   );
 
   const deleteCheckIn = useCallback(
@@ -729,6 +777,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       approveJoinRequest,
       rejectJoinRequest,
       checkInBeer,
+      updateCheckIn,
       deleteCheckIn,
       reactToCheckIn,
       getGroupLeaderboard,
@@ -747,6 +796,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       approveJoinRequest,
       rejectJoinRequest,
       checkInBeer,
+      updateCheckIn,
       deleteCheckIn,
       reactToCheckIn,
       getGroupLeaderboard,

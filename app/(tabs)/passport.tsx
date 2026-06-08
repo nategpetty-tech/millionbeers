@@ -20,7 +20,7 @@ export default function PassportScreen() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [selectedStamp, setSelectedStamp] = useState<Challenge | null>(null);
   const { profile, signOut } = useAuth();
-  const { user, checkIns, challenges, badges, initializeSeedData, reactToCheckIn, deleteCheckIn } = usePassport();
+  const { user, checkIns, challenges, badges, initializeSeedData, reactToCheckIn, updateCheckIn, deleteCheckIn } = usePassport();
   const personalActivity = checkIns.filter((item) => item.userId === user.id).slice(0, 6);
   const completed = challenges.filter((challenge) => challenge.current >= challenge.goal).length;
   const completedStamps = challenges.filter((challenge) => challenge.current >= challenge.goal);
@@ -97,7 +97,9 @@ export default function PassportScreen() {
 
           <SectionTitle title="Personal Activity" />
           {personalActivity.length ? (
-            personalActivity.map((item) => <ActivityItem key={item.id} item={item} currentUserId={user.id} onReact={reactToCheckIn} onDelete={deleteCheckIn} />)
+            personalActivity.map((item) => (
+              <ActivityItem key={item.id} item={item} currentUserId={user.id} onReact={reactToCheckIn} onEdit={updateCheckIn} onDelete={deleteCheckIn} />
+            ))
           ) : (
             <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, padding: 16 }}>
               <Text style={{ color: theme.colors.text, fontWeight: "900" }}>No personal stamps yet</Text>

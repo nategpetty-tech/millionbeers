@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Image, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { ScanBoxesOverlay } from "@/components/ScanBoxesOverlay";
 import { BeerScanResult, BeerScanStatus, isBeerPhotoScannerConfigured, scanBeerPhoto } from "@/services/beerPhotoScanner";
+import { compressBeerPhoto } from "@/services/photoCompression";
 import { isPhotoStorageConfigured, uploadCheckInPhoto } from "@/services/photoStorage";
 import { usePassport } from "@/store/passportStore";
 import { theme } from "@/theme";
@@ -174,14 +175,17 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
   }
 
   async function handleSelectedPhoto(uri: string) {
-    setPhotoUri(uri);
+    setPhotoMessage("Preparing photo...");
+    const compressed = await compressBeerPhoto(uri);
+    const preparedUri = compressed.uri;
+    setPhotoUri(preparedUri);
     setPhotoSize(undefined);
     setUploadStatus("idle");
     setBeerScan(undefined);
     setScanStatus(isBeerPhotoScannerConfigured() ? "scanning" : "unavailable");
     setPhotoMessage(isBeerPhotoScannerConfigured() ? "Scanning photo for beers..." : "Photo scanner is unavailable until Supabase is configured.");
     Image.getSize(
-      uri,
+      preparedUri,
       (width, height) => setPhotoSize({ width, height }),
       () => setPhotoSize(undefined)
     );
@@ -191,7 +195,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
     }
 
     try {
-      const scan = await scanBeerPhoto(uri, quantity);
+      const scan = await scanBeerPhoto(preparedUri, quantity);
       setBeerScan(scan);
       setScanStatus(scan.status === "unavailable" ? "unavailable" : "scanned");
       if (scan.detectedCount > 0 && scan.confidence >= 0.5) {
@@ -246,6 +250,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
       scanConfidence: beerScan?.confidence,
       scanStatus: resolvedScanStatus,
       scanBoxes: beerScan?.boxes,
+      countSource: resolvedScanStatus === "confirmed" ? "scanner" : "manual",
       latitude: coordinates?.latitude,
       longitude: coordinates?.longitude
     });

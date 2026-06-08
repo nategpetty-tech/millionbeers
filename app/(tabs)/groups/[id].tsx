@@ -11,6 +11,7 @@ import { LeaderboardRow } from "@/components/LeaderboardRow";
 import { ProgressBar } from "@/components/ProgressBar";
 import { SectionTitle } from "@/components/SectionTitle";
 import { StatCard } from "@/components/StatCard";
+import { compressBackdropPhoto } from "@/services/photoCompression";
 import { isGroupBackdropStorageConfigured, uploadGroupBackdrop } from "@/services/photoStorage";
 import { usePassport } from "@/store/passportStore";
 import { theme } from "@/theme";
@@ -30,6 +31,7 @@ export default function GroupDetailScreen() {
     getGroupLeaderboard,
     getGroupStats,
     reactToCheckIn,
+    updateCheckIn,
     deleteCheckIn,
     approveJoinRequest,
     rejectJoinRequest,
@@ -73,7 +75,8 @@ export default function GroupDetailScreen() {
     if (result.canceled || !result.assets[0]?.uri) return;
 
     try {
-      const localUri = result.assets[0].uri;
+      const compressed = await compressBackdropPhoto(result.assets[0].uri);
+      const localUri = compressed.uri;
       if (isGroupBackdropStorageConfigured()) {
         const uploaded = await uploadGroupBackdrop(localUri, user.id);
         updateGroupBackdrop(group.id, { backdropUrl: uploaded.signedUrl, backdropStoragePath: uploaded.storagePath });
@@ -106,7 +109,7 @@ export default function GroupDetailScreen() {
             </Pressable>
             <Text style={{ color: theme.colors.text, fontFamily: "Georgia", fontSize: 18, fontWeight: "900" }}>{group.name.toUpperCase()}</Text>
             <Pressable onPress={() => void shareInvite()} style={{ padding: 6 }}>
-              <Ionicons name="settings-outline" color={theme.colors.text} size={22} />
+              <Ionicons name="share-social-outline" color={theme.colors.text} size={22} />
             </Pressable>
           </View>
           <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, overflow: "hidden" }}>
@@ -171,6 +174,7 @@ export default function GroupDetailScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={{ color: theme.colors.dim, fontSize: 11, fontWeight: "900" }}>INVITE CODE</Text>
                 <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 18, marginTop: 2 }}>{group.inviteCode}</Text>
+                <Text style={{ color: theme.colors.muted, marginTop: 3, fontSize: 12 }}>Invitees request access; founders approve in Pintly.</Text>
               </View>
               <Pressable
                 onPress={() => void shareInvite()}
@@ -237,7 +241,10 @@ export default function GroupDetailScreen() {
               {isFounder ? (
                 <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, padding: 16 }}>
                   <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                    <Text style={{ color: theme.colors.text, fontSize: 18, fontWeight: "900" }}>Join Requests</Text>
+                    <View>
+                      <Text style={{ color: theme.colors.text, fontSize: 18, fontWeight: "900" }}>Join Requests</Text>
+                      <Text style={{ color: theme.colors.muted, marginTop: 3 }}>Approve search and invite-code requests.</Text>
+                    </View>
                     <Text style={{ color: theme.colors.gold, fontWeight: "900" }}>{pendingRequests.length}</Text>
                   </View>
                   {pendingRequests.length ? (
@@ -258,8 +265,20 @@ export default function GroupDetailScreen() {
                           <Text style={{ color: theme.colors.text, fontWeight: "900" }}>{request.name}</Text>
                           <Text style={{ color: theme.colors.muted, marginTop: 2 }}>{request.source === "invite" ? "Used invite code" : "Found by search"}</Text>
                         </View>
-                        <Pressable onPress={() => approveJoinRequest(group.id, request.id)} style={{ padding: 8 }}>
-                          <Ionicons name="checkmark-circle" color={theme.colors.neon} size={26} />
+                        <Pressable
+                          onPress={() => approveJoinRequest(group.id, request.id)}
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 5,
+                            backgroundColor: theme.colors.neon,
+                            borderRadius: theme.radius.pill,
+                            paddingHorizontal: 10,
+                            paddingVertical: 8
+                          }}
+                        >
+                          <Ionicons name="checkmark" color={theme.colors.ink} size={16} />
+                          <Text style={{ color: theme.colors.ink, fontWeight: "900", fontSize: 12 }}>Approve</Text>
                         </Pressable>
                         <Pressable onPress={() => rejectJoinRequest(group.id, request.id)} style={{ padding: 8 }}>
                           <Ionicons name="close-circle" color={theme.colors.danger} size={26} />
@@ -273,7 +292,9 @@ export default function GroupDetailScreen() {
               ) : null}
               <SectionTitle title="Group Feed" />
               {activity.length ? (
-                activity.map((item) => <ActivityItem key={item.id} item={item} currentUserId={user.id} onReact={reactToCheckIn} onDelete={deleteCheckIn} />)
+                activity.map((item) => (
+                  <ActivityItem key={item.id} item={item} currentUserId={user.id} onReact={reactToCheckIn} onEdit={updateCheckIn} onDelete={deleteCheckIn} />
+                ))
               ) : (
                 <EmptyState title="No check-ins yet" body="Log the first beer and it will appear in this group's feed." />
               )}
@@ -283,7 +304,9 @@ export default function GroupDetailScreen() {
           {segment === "Activity" ? (
             <View>
               {activity.length ? (
-                activity.map((item) => <ActivityItem key={item.id} item={item} currentUserId={user.id} onReact={reactToCheckIn} onDelete={deleteCheckIn} />)
+                activity.map((item) => (
+                  <ActivityItem key={item.id} item={item} currentUserId={user.id} onReact={reactToCheckIn} onEdit={updateCheckIn} onDelete={deleteCheckIn} />
+                ))
               ) : (
                 <EmptyState title="No activity" body="Group check-ins will appear here as members log beers." />
               )}

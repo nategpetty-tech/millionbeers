@@ -3,6 +3,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { ActivityIndicator, Alert, ImageBackground, Modal, Pressable, Text, TextInput, View } from "react-native";
+import { compressBackdropPhoto } from "@/services/photoCompression";
 import { isGroupBackdropStorageConfigured, uploadGroupBackdrop } from "@/services/photoStorage";
 import { usePassport } from "@/store/passportStore";
 import { Group } from "@/types";
@@ -40,7 +41,8 @@ export function CreateGroupModal({ visible, onClose }: Props) {
     });
 
     if (!result.canceled && result.assets[0]?.uri) {
-      setBackdropUri(result.assets[0].uri);
+      const compressed = await compressBackdropPhoto(result.assets[0].uri);
+      setBackdropUri(compressed.uri);
     }
   }
 

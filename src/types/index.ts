@@ -107,6 +107,7 @@ export type BeerCheckIn = {
   scanConfidence?: number;
   scanStatus?: "confirmed" | "mismatch" | "uncertain" | "unavailable";
   scanBoxes?: BeerScanBox[];
+  countSource?: "scanner" | "manual";
   groupIds: string[];
   createdAt: string;
   reactions: number;
@@ -154,8 +155,14 @@ export type CheckInInput = {
   scanConfidence?: number;
   scanStatus?: "confirmed" | "mismatch" | "uncertain" | "unavailable";
   scanBoxes?: BeerScanBox[];
+  countSource?: "scanner" | "manual";
   latitude?: number;
   longitude?: number;
+};
+
+export type UpdateCheckInInput = {
+  quantity: number;
+  note?: string;
 };
 
 export type BeerScanBox = {

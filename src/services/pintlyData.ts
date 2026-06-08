@@ -1,6 +1,16 @@
 import { supabase } from "@/services/supabase";
 import { createSignedGroupBackdropUrl, createSignedPhotoUrl } from "@/services/photoStorage";
-import { BeerCheckIn, CheckInInput, CreateGroupInput, Group, GroupJoinRequest, GroupMember, UpdateGroupBackdropInput, User } from "@/types";
+import {
+  BeerCheckIn,
+  CheckInInput,
+  CreateGroupInput,
+  Group,
+  GroupJoinRequest,
+  GroupMember,
+  UpdateCheckInInput,
+  UpdateGroupBackdropInput,
+  User
+} from "@/types";
 
 type ProfileRow = {
   id: string;
@@ -69,6 +79,7 @@ type CheckInRow = {
   scan_confidence: number | null;
   scan_status: BeerCheckIn["scanStatus"] | null;
   scan_boxes: BeerCheckIn["scanBoxes"] | null;
+  count_source: BeerCheckIn["countSource"] | null;
   created_at: string;
   profiles?: ProfileRow | ProfileRow[] | null;
   check_in_groups?: CheckInGroupRow[];
@@ -246,6 +257,7 @@ export async function createRemoteCheckIn(input: CheckInInput, localCheckIn: Bee
     scan_confidence: localCheckIn.scanConfidence ?? null,
     scan_status: localCheckIn.scanStatus ?? null,
     scan_boxes: localCheckIn.scanBoxes ?? null,
+    count_source: localCheckIn.countSource ?? "manual",
     created_at: localCheckIn.createdAt
   });
   if (error) throw error;
@@ -256,6 +268,19 @@ export async function createRemoteCheckIn(input: CheckInInput, localCheckIn: Bee
       .insert(input.groupIds.map((groupId) => ({ check_in_id: localCheckIn.id, group_id: groupId })));
     if (groupLinkError) throw groupLinkError;
   }
+}
+
+export async function updateRemoteCheckIn(checkInId: string, input: UpdateCheckInInput) {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from("check_ins")
+    .update({
+      quantity: Math.max(1, Math.min(24, Math.floor(input.quantity))),
+      note: input.note?.trim() || null,
+      count_source: "manual"
+    })
+    .eq("id", checkInId);
+  if (error) throw error;
 }
 
 export async function deleteRemoteCheckIn(checkInId: string) {
@@ -365,6 +390,7 @@ async function mapCheckInRow(row: CheckInRow): Promise<BeerCheckIn> {
     scanConfidence: row.scan_confidence ?? undefined,
     scanStatus: row.scan_status ?? undefined,
     scanBoxes: row.scan_boxes ?? undefined,
+    countSource: row.count_source ?? undefined,
     groupIds: (row.check_in_groups ?? []).map((item) => item.group_id),
     createdAt: row.created_at,
     reactions: reactedBy.length,
