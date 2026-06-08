@@ -54,7 +54,7 @@ Deno.serve(async (request) => {
     }
 
     const model = Deno.env.get("OPENAI_VISION_MODEL") ?? "gpt-4o-mini";
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -62,13 +62,11 @@ Deno.serve(async (request) => {
       },
       body: JSON.stringify({
         model,
-        instructions:
-          "You count beers in user photos for a beer check-in app. Count visible beers only: cans, bottles, draft glasses, pint glasses, tasting glasses, or cups that are likely beer. Do not count signs, logos, menu items, empty packaging, water, people, or duplicate reflections. If the image is unclear, return a lower confidence.",
         temperature: 0,
-        max_output_tokens: 900,
-        text: {
-          format: {
-            type: "json_schema",
+        max_tokens: 900,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
             name: "beer_photo_scan",
             strict: true,
             schema: {
@@ -136,19 +134,26 @@ Deno.serve(async (request) => {
             }
           }
         },
-        input: [
+        messages: [
+          {
+            role: "system",
+            content:
+              "You count beers in user photos for a beer check-in app. Count visible beers only: cans, bottles, draft glasses, pint glasses, tasting glasses, or cups that are likely beer. Do not count signs, logos, menu items, empty packaging, water, people, or duplicate reflections. If the image is unclear, return a lower confidence."
+          },
           {
             role: "user",
             content: [
               {
-                type: "input_text",
+                type: "text",
                 text:
                   "Estimate the number of beers visible in this photo. Return a count plus one normalized box for each counted beer. Be conservative when the object is blocked, empty, non-alcoholic, or ambiguous. Boxes must surround only the counted beer object, not a person's hand or the whole table."
               },
               {
-                type: "input_image",
-                image_url: `data:${mimeType};base64,${imageBase64}`,
-                detail: "high"
+                type: "image_url",
+                image_url: {
+                  url: `data:${mimeType};base64,${imageBase64}`,
+                  detail: "high"
+                }
               }
             ]
           }
@@ -266,6 +271,10 @@ function parseStructuredOutput(payload: unknown) {
 
   const chatContent = response.choices?.[0]?.message?.content;
   if (typeof chatContent === "string") return JSON.parse(chatContent);
+  if (Array.isArray(chatContent)) {
+    const text = chatContent.map((item) => (item as { text?: unknown }).text).find((item) => typeof item === "string");
+    if (typeof text === "string") return JSON.parse(text);
+  }
   return chatContent;
 }
 
