@@ -527,7 +527,9 @@ function scanCopy(
   if (status === "idle") return "Choose or take a photo and Pintly will estimate how many beers are visible.";
   if (status === "scanning") return "Counting visible cans, bottles, and pours...";
   if (status === "failed") return "Scanner could not inspect this photo. Set the count manually before logging.";
-  if (status === "unavailable" || resolvedStatus === "unavailable") return "Configure the Supabase scan-beer-photo function to enable image confirmation.";
+  if (status === "unavailable" || resolvedStatus === "unavailable") {
+    return scan?.explanation || "Scanner is unavailable right now. You can still set the count manually.";
+  }
   if (!scan) return "Scanner result is not available.";
   const confidence = `${Math.round(scan.confidence * 100)}%`;
   if (resolvedStatus === "confirmed") return `Scanner sees ${quantity} beer${quantity === 1 ? "" : "s"} with ${confidence} confidence.`;

@@ -53,7 +53,7 @@ Deno.serve(async (request) => {
       return json({ error: "imageBase64 is required." }, 400);
     }
 
-    const model = Deno.env.get("OPENAI_VISION_MODEL") ?? "gpt-4.1-mini";
+    const model = Deno.env.get("OPENAI_VISION_MODEL") ?? "gpt-4o-mini";
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -157,7 +157,9 @@ Deno.serve(async (request) => {
     });
 
     if (!response.ok) {
-      return json(unavailable("Scanner provider could not inspect the photo.", normalizedClaim), 200);
+      const errorText = await response.text();
+      console.error("OpenAI scanner provider error", response.status, errorText);
+      return json(unavailable(`OpenAI scanner error ${response.status}: ${providerErrorMessage(errorText)}`, normalizedClaim), 200);
     }
 
     const payload = await response.json();
@@ -177,8 +179,9 @@ Deno.serve(async (request) => {
       explanation: explanationFor(status, finalCount, parsed?.explanation),
       boxes
     });
-  } catch {
-    return json(unavailable("Scanner could not inspect this photo.", 1), 200);
+  } catch (error) {
+    console.error("Scanner runtime error", error);
+    return json(unavailable(`Scanner runtime error: ${errorMessage(error)}`, 1), 200);
   }
 });
 
@@ -223,6 +226,27 @@ function clampCount(value: unknown) {
 function clampConfidence(value: unknown) {
   const confidence = typeof value === "number" && Number.isFinite(value) ? value : 0;
   return Math.max(0, Math.min(1, confidence));
+}
+
+function providerErrorMessage(value: string) {
+  try {
+    const parsed = JSON.parse(value) as { error?: { message?: unknown }; message?: unknown };
+    const message = parsed.error?.message ?? parsed.message;
+    if (typeof message === "string" && message.trim()) return truncate(message.trim());
+  } catch {
+    // Fall through to the raw text below.
+  }
+  return truncate(value || "Provider did not return details.");
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return truncate(error.message);
+  if (typeof error === "string" && error.trim()) return truncate(error.trim());
+  return "Unexpected scanner failure.";
+}
+
+function truncate(value: string) {
+  return value.length > 180 ? `${value.slice(0, 177)}...` : value;
 }
 
 function parseStructuredOutput(payload: unknown) {

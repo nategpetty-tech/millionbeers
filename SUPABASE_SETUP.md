@@ -98,10 +98,10 @@ supabase functions deploy scan-beer-photo
 supabase secrets set OPENAI_API_KEY=sk-your-server-side-key
 ```
 
-The scanner returns a suggested beer count, confidence, and normalized detection boxes that Pintly draws over the photo preview. The function defaults to `gpt-4.1-mini`. To use a different OpenAI vision-capable model, set:
+The scanner returns a suggested beer count, confidence, and normalized detection boxes that Pintly draws over the photo preview. The function defaults to `gpt-4o-mini`. To use a different OpenAI vision-capable model, set:
 
 ```sh
-supabase secrets set OPENAI_VISION_MODEL=gpt-4.1-mini
+supabase secrets set OPENAI_VISION_MODEL=gpt-4o-mini
 ```
 
 Keep `OPENAI_API_KEY` out of Expo `.env` files. The mobile app calls the Supabase function, and the function calls OpenAI from the server side.
