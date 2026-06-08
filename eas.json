@@ -17,5 +17,10 @@
       },
       "autoIncrement": false
     }
+  },
+  "submit": {
+    "production": {
+      "ios": {}
+    }
   }
 }
