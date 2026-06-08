@@ -1,0 +1,63 @@
+{
+  "expo": {
+    "name": "Pintly",
+    "slug": "pintly",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "pintly",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "ios": {
+      "bundleIdentifier": "com.nate.pintly",
+      "buildNumber": "2",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Pintly uses the camera to add a photo to your beer check-in stamp.",
+        "NSLocationWhenInUseUsageDescription": "Pintly uses your location to place beer stamps on your personal map.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#111312"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#050706"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Pintly can attach a beer photo to your check-in stamp.",
+          "cameraPermission": "Pintly uses the camera to add a photo to your beer check-in stamp."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Pintly uses your location to place beer stamps on your personal map."
+        }
+      ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "33d72ff9-1287-4a51-8ee7-42c98ae2eff1"
+      }
+    }
+  }
+}
