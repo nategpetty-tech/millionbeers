@@ -25,6 +25,13 @@ type ScanBox = {
   label: string;
 };
 
+type CandidateBox = ScanBox & {
+  objectType: string;
+  isBeer: boolean;
+};
+
+const beerObjectTypes = new Set(["can", "bottle", "glass", "cup", "pint", "draft", "pour", "flight", "taster"]);
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -87,10 +94,60 @@ Deno.serve(async (request) => {
                 explanation: {
                   type: "string"
                 },
+                candidates: {
+                  type: "array",
+                  maxItems: 30,
+                  description: "Every plausible beverage-like object considered before filtering.",
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      x: {
+                        type: "number",
+                        minimum: 0,
+                        maximum: 1
+                      },
+                      y: {
+                        type: "number",
+                        minimum: 0,
+                        maximum: 1
+                      },
+                      width: {
+                        type: "number",
+                        minimum: 0,
+                        maximum: 1
+                      },
+                      height: {
+                        type: "number",
+                        minimum: 0,
+                        maximum: 1
+                      },
+                      confidence: {
+                        type: "number",
+                        minimum: 0,
+                        maximum: 1
+                      },
+                      label: {
+                        type: "string"
+                      },
+                      objectType: {
+                        type: "string",
+                        enum: ["can", "bottle", "glass", "cup", "pint", "draft", "pour", "flight", "taster", "person", "hand", "phone", "furniture", "background", "other"]
+                      },
+                      isBeer: {
+                        type: "boolean"
+                      },
+                      rejectionReason: {
+                        type: "string"
+                      }
+                    },
+                    required: ["x", "y", "width", "height", "confidence", "label", "objectType", "isBeer", "rejectionReason"]
+                  }
+                },
                 boxes: {
                   type: "array",
                   maxItems: 24,
-                  description: "Normalized bounding boxes for each counted beer, using the original image coordinate space.",
+                  description: "Only high-confidence final beer boxes, using original image coordinate space.",
                   items: {
                     type: "object",
                     additionalProperties: false,
@@ -124,13 +181,20 @@ Deno.serve(async (request) => {
                       },
                       label: {
                         type: "string"
+                      },
+                      objectType: {
+                        type: "string",
+                        enum: ["can", "bottle", "glass", "cup", "pint", "draft", "pour", "flight", "taster"]
+                      },
+                      isBeer: {
+                        type: "boolean"
                       }
                     },
-                    required: ["x", "y", "width", "height", "confidence", "label"]
+                    required: ["x", "y", "width", "height", "confidence", "label", "objectType", "isBeer"]
                   }
                 }
               },
-              required: ["detectedCount", "confidence", "explanation", "boxes"]
+              required: ["detectedCount", "confidence", "explanation", "candidates", "boxes"]
             }
           }
         },
@@ -146,7 +210,7 @@ Deno.serve(async (request) => {
               {
                 type: "text",
                 text:
-                  "Estimate the number of beers visible in this photo. Return a count plus one normalized box for each counted beer. Be very conservative. A counted beer must be a visible can, bottle, glass, cup, or pour that likely contains beer. Do not count or box people, faces, heads, hands, phones, furniture, speakers, decor, shadows, or background objects. Each box must tightly surround only the beer container or beer glass. If you are not sure where the beer container is, return lower confidence below 0.45 and use no box for that object."
+                  "Estimate the number of beers visible in this photo. First list candidates for beverage-like objects. Then provide final boxes only for candidates that are clearly beer containers/glasses. Be very conservative. A counted beer must be a visible can, bottle, glass, cup, pour, taster, or flight that likely contains beer. Do not count or box people, faces, heads, hands, phones, furniture, speakers, decor, shadows, wall art, background objects, or partial non-beer objects. Each final box must tightly surround only the beer container or beer glass. If a hand is holding a beer, box only the visible container, not the hand. If the beer object is tiny, occluded, or ambiguous, put it in candidates with low confidence and do not include it in final boxes. If final boxes are not trustworthy, set confidence below 0.45."
               },
               {
                 type: "image_url",
@@ -171,9 +235,11 @@ Deno.serve(async (request) => {
     const parsed = parseStructuredOutput(payload);
     const detectedCount = clampCount(parsed?.detectedCount);
     const confidence = clampConfidence(parsed?.confidence);
-    const boxes = normalizeBoxes(parsed?.boxes);
-    const finalCount = Math.max(detectedCount, boxes.length);
-    const finalConfidence = boxes.length && confidence === 0 ? averageBoxConfidence(boxes) : confidence;
+    const candidateBoxes = normalizeCandidateBoxes(parsed?.candidates);
+    const modelBoxes = normalizeCandidateBoxes(parsed?.boxes);
+    const boxes = filterBeerBoxes(modelBoxes.length ? modelBoxes : candidateBoxes);
+    const finalCount = boxes.length || confidence >= 0.6 ? Math.max(detectedCount, boxes.length) : detectedCount;
+    const finalConfidence = boxes.length ? Math.min(confidence || averageBoxConfidence(boxes), averageBoxConfidence(boxes)) : Math.min(confidence, 0.44);
     const status = statusFor(finalCount, normalizedClaim, finalConfidence);
 
     return json({
@@ -290,22 +356,33 @@ function parseStructuredOutput(payload: unknown) {
   return chatContent;
 }
 
-function normalizeBoxes(value: unknown): ScanBox[] {
+function normalizeCandidateBoxes(value: unknown): CandidateBox[] {
   if (!Array.isArray(value)) return [];
   return value
     .slice(0, 24)
     .map((item) => {
-      const box = item as Partial<ScanBox> | null;
+      const box = item as Partial<CandidateBox> | null;
       return {
         x: clampUnit(box?.x),
         y: clampUnit(box?.y),
         width: clampUnit(box?.width),
         height: clampUnit(box?.height),
         confidence: clampConfidence(box?.confidence),
-        label: typeof box?.label === "string" && box.label.trim() ? box.label.trim() : "beer"
+        label: typeof box?.label === "string" && box.label.trim() ? box.label.trim() : "beer",
+        objectType: normalizeObjectType(box?.objectType),
+        isBeer: box?.isBeer === true
       };
     })
     .filter((box) => box.width > 0.02 && box.height > 0.02 && box.confidence >= 0.15);
+}
+
+function filterBeerBoxes(boxes: CandidateBox[]): ScanBox[] {
+  return boxes
+    .filter((box) => box.isBeer)
+    .filter((box) => beerObjectTypes.has(box.objectType))
+    .filter((box) => box.confidence >= 0.88)
+    .filter((box) => isReasonableBeerShape(box))
+    .map(({ x, y, width, height, confidence, label }) => ({ x, y, width, height, confidence, label }));
 }
 
 function averageBoxConfidence(boxes: ScanBox[]) {
@@ -315,4 +392,18 @@ function averageBoxConfidence(boxes: ScanBox[]) {
 function clampUnit(value: unknown) {
   const numeric = typeof value === "number" && Number.isFinite(value) ? value : 0;
   return Math.max(0, Math.min(1, numeric));
+}
+
+function normalizeObjectType(value: unknown) {
+  if (typeof value !== "string") return "other";
+  return value.trim().toLowerCase();
+}
+
+function isReasonableBeerShape(box: CandidateBox) {
+  const area = box.width * box.height;
+  const aspectRatio = box.width > 0 ? box.height / box.width : 0;
+  if (area > 0.22) return false;
+  if (area < 0.0015) return false;
+  if (aspectRatio < 0.45 || aspectRatio > 5.5) return false;
+  return true;
 }

@@ -134,10 +134,21 @@ function normalizeBoxes(value: unknown): BeerScanBox[] {
         label: typeof box?.label === "string" && box.label.trim() ? box.label.trim() : "beer"
       };
     })
-    .filter((box) => box.width > 0.02 && box.height > 0.02);
+    .filter((box) => box.width > 0.02 && box.height > 0.02)
+    .filter((box) => box.confidence >= 0.88)
+    .filter((box) => isReasonableBeerShape(box));
 }
 
 function clampUnit(value: unknown) {
   const numeric = typeof value === "number" && Number.isFinite(value) ? value : 0;
   return Math.max(0, Math.min(1, numeric));
+}
+
+function isReasonableBeerShape(box: BeerScanBox) {
+  const area = box.width * box.height;
+  const aspectRatio = box.width > 0 ? box.height / box.width : 0;
+  if (area > 0.22) return false;
+  if (area < 0.0015) return false;
+  if (aspectRatio < 0.45 || aspectRatio > 5.5) return false;
+  return true;
 }
