@@ -165,6 +165,13 @@ export type UpdateCheckInInput = {
   note?: string;
 };
 
+export type UpdateCheckInScanInput = {
+  scannedBeerCount?: number;
+  scanConfidence?: number;
+  scanStatus?: BeerCheckIn["scanStatus"];
+  scanBoxes?: BeerScanBox[];
+};
+
 export type BeerScanBox = {
   x: number;
   y: number;

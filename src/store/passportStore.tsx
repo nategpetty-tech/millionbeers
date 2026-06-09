@@ -11,6 +11,7 @@ import {
   requestRemoteGroupJoin,
   toggleRemoteReaction,
   updateRemoteCheckIn,
+  updateRemoteCheckInScan,
   updateRemoteGroupBackdrop,
   upsertProfile
 } from "@/services/pintlyData";
@@ -27,6 +28,7 @@ import {
   UpdateProfileInput,
   UpdateGroupBackdropInput,
   UpdateCheckInInput,
+  UpdateCheckInScanInput,
   User
 } from "@/types";
 import { makeId, makeUuid } from "@/utils/format";
@@ -54,6 +56,7 @@ type PassportActions = {
   rejectJoinRequest: (groupId: string, requestId: string) => void;
   checkInBeer: (input: CheckInInput) => CheckInResult;
   updateCheckIn: (checkInId: string, input: UpdateCheckInInput) => void;
+  updateCheckInScan: (checkInId: string, input: UpdateCheckInScanInput) => void;
   deleteCheckIn: (checkInId: string) => void;
   reactToCheckIn: (checkInId: string) => void;
   getGroupLeaderboard: (groupId: string, mode?: "beers" | "checkIns") => GroupMember[];
@@ -673,6 +676,31 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
     [persist]
   );
 
+  const updateCheckInScan = useCallback(
+    (checkInId: string, input: UpdateCheckInScanInput) => {
+      setState((current) => {
+        const target = current.checkIns.find((checkIn) => checkIn.id === checkInId);
+        if (!target || target.userId !== current.user.id) return current;
+        const nextCheckIns = current.checkIns.map((checkIn) =>
+          checkIn.id === checkInId
+            ? {
+                ...checkIn,
+                scannedBeerCount: input.scannedBeerCount,
+                scanConfidence: input.scanConfidence,
+                scanStatus: input.scanStatus,
+                scanBoxes: input.scanBoxes
+              }
+            : checkIn
+        );
+        const next = { ...current, checkIns: nextCheckIns };
+        void persist(next);
+        return next;
+      });
+      syncRemote(updateRemoteCheckInScan(checkInId, input));
+    },
+    [persist]
+  );
+
   const deleteCheckIn = useCallback(
     (checkInId: string) => {
       setState((current) => {
@@ -778,6 +806,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       rejectJoinRequest,
       checkInBeer,
       updateCheckIn,
+      updateCheckInScan,
       deleteCheckIn,
       reactToCheckIn,
       getGroupLeaderboard,
@@ -797,6 +826,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       rejectJoinRequest,
       checkInBeer,
       updateCheckIn,
+      updateCheckInScan,
       deleteCheckIn,
       reactToCheckIn,
       getGroupLeaderboard,

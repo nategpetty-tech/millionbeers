@@ -3,11 +3,11 @@ import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Image, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { ScanBoxesOverlay } from "@/components/ScanBoxesOverlay";
-import { BeerScanResult, BeerScanStatus, isBeerPhotoScannerConfigured, scanBeerPhoto } from "@/services/beerPhotoScanner";
+import { BeerScanResult, isBeerPhotoScannerConfigured, scanBeerPhoto } from "@/services/beerPhotoScanner";
 import { compressBeerPhoto } from "@/services/photoCompression";
 import { isPhotoStorageConfigured, uploadCheckInPhoto } from "@/services/photoStorage";
 import { usePassport } from "@/store/passportStore";
+import type { BeerCheckIn } from "@/types";
 import { theme } from "@/theme";
 
 type Props = {
@@ -18,9 +18,11 @@ type Props = {
 
 const emptyGroupIds: string[] = [];
 const previewHeight = 210;
+const highCountThreshold = 6;
+const highCountWindowMs = 24 * 60 * 60 * 1000;
 
 export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds }: Props) {
-  const { checkInBeer, groups, user } = usePassport();
+  const { checkInBeer, checkIns, updateCheckInScan, groups, user } = usePassport();
   const [quantity, setQuantity] = useState(1);
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
@@ -28,17 +30,13 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
   const [note, setNote] = useState("");
   const [photoUri, setPhotoUri] = useState<string | undefined>();
   const [photoSize, setPhotoSize] = useState<{ width: number; height: number } | undefined>();
-  const [previewSize, setPreviewSize] = useState<{ width: number; height: number }>({ width: 0, height: previewHeight });
   const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number } | undefined>();
   const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "uploaded" | "local" | "failed">("idle");
-  const [scanStatus, setScanStatus] = useState<"idle" | "scanning" | "scanned" | "failed" | "unavailable">("idle");
-  const [beerScan, setBeerScan] = useState<BeerScanResult | undefined>();
   const [cameraOpening, setCameraOpening] = useState(false);
   const [photoMessage, setPhotoMessage] = useState("");
   const [selectedGroups, setSelectedGroups] = useState<string[]>(defaultGroupIds);
   const cameraLaunchedForSession = useRef(false);
-  const canSubmit = uploadStatus !== "uploading" && scanStatus !== "scanning" && !cameraOpening && Boolean(photoUri);
-  const resolvedScanStatus = beerScan ? scanStatusForQuantity(beerScan, quantity) : undefined;
+  const canSubmit = uploadStatus !== "uploading" && !cameraOpening && Boolean(photoUri);
 
   function automaticGroupIds() {
     const memberGroupIds = groups.filter((group) => group.members.some((member) => member.userId === user.id)).map((group) => group.id);
@@ -74,8 +72,6 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
     setPhotoSize(undefined);
     setCoordinates(undefined);
     setUploadStatus("idle");
-    setScanStatus("idle");
-    setBeerScan(undefined);
     setCameraOpening(false);
     setPhotoMessage("");
     setSelectedGroups(automaticGroupIds());
@@ -181,31 +177,12 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
     setPhotoUri(preparedUri);
     setPhotoSize(undefined);
     setUploadStatus("idle");
-    setBeerScan(undefined);
-    setScanStatus(isBeerPhotoScannerConfigured() ? "scanning" : "unavailable");
-    setPhotoMessage(isBeerPhotoScannerConfigured() ? "Scanning photo for beers..." : "Photo scanner is unavailable until Supabase is configured.");
+    setPhotoMessage("");
     Image.getSize(
       preparedUri,
       (width, height) => setPhotoSize({ width, height }),
       () => setPhotoSize(undefined)
     );
-
-    if (!isBeerPhotoScannerConfigured()) {
-      return;
-    }
-
-    try {
-      const scan = await scanBeerPhoto(preparedUri, quantity);
-      setBeerScan(scan);
-      setScanStatus(scan.status === "unavailable" ? "unavailable" : "scanned");
-      if (scan.detectedCount > 0 && scan.confidence >= 0.5) {
-        setQuantity(scan.detectedCount);
-      }
-      setPhotoMessage("");
-    } catch {
-      setScanStatus("failed");
-      setPhotoMessage("Scanner could not inspect this photo. You can still set the count manually.");
-    }
   }
 
   async function submit() {
@@ -234,6 +211,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
     }
 
     const stampCity = city.trim() || "Unknown";
+    const shouldRunTrustScan = shouldScanForHighCountStreak(checkIns, user.id, quantity);
     const result = checkInBeer({
       beerName: "Beer log",
       quantity,
@@ -246,14 +224,13 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
       photoUri,
       photoUrl: uploadedPhoto?.signedUrl,
       photoStoragePath: uploadedPhoto?.storagePath,
-      scannedBeerCount: beerScan?.detectedCount,
-      scanConfidence: beerScan?.confidence,
-      scanStatus: resolvedScanStatus,
-      scanBoxes: beerScan?.boxes,
-      countSource: resolvedScanStatus === "confirmed" ? "scanner" : "manual",
+      countSource: "manual",
       latitude: coordinates?.latitude,
       longitude: coordinates?.longitude
     });
+    if (shouldRunTrustScan) {
+      void runQuietTrustScan(result.checkIn.id, photoUri, quantity, updateCheckInScan);
+    }
     if (result.completedChallenges.length) {
       const challengeNames = result.completedChallenges.map((challenge) => challenge.title).join(", ");
       const badgeNames = result.unlockedBadges.map((badge) => badge.title).join(", ");
@@ -296,14 +273,9 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
           >
             {photoUri ? (
               <View
-                onLayout={(event) => {
-                  const { width, height } = event.nativeEvent.layout;
-                  setPreviewSize({ width, height });
-                }}
                 style={{ width: "100%", height: previewHeight, backgroundColor: "#050806" }}
               >
                 <Image source={{ uri: photoUri }} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
-                <ScanBoxesOverlay boxes={beerScan?.boxes} photoSize={photoSize} previewSize={previewSize} />
                 <View
                   style={{
                     position: "absolute",
@@ -359,34 +331,13 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <View style={{ flex: 1 }}>
                 <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 16 }}>Beers in photo</Text>
-                <Text style={{ color: theme.colors.muted, marginTop: 3 }}>Scanner suggests a count; adjust it if the photo is ambiguous.</Text>
+                <Text style={{ color: theme.colors.muted, marginTop: 3 }}>Set the count your group should get credit for.</Text>
               </View>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
                 <QuantityButton icon="remove" disabled={quantity <= 1} onPress={() => setQuantity((current) => Math.max(1, current - 1))} />
                 <Text style={{ color: theme.colors.neon, fontWeight: "900", fontSize: 24, minWidth: 34, textAlign: "center" }}>{quantity}</Text>
                 <QuantityButton icon="add" disabled={quantity >= 24} onPress={() => setQuantity((current) => Math.min(24, current + 1))} />
               </View>
-            </View>
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 10,
-                backgroundColor: theme.colors.surface,
-                borderRadius: theme.radius.md,
-                borderWidth: 1,
-                borderColor: theme.colors.border,
-                padding: 12
-              }}
-            >
-              <Ionicons name="scan-outline" color={theme.colors.gold} size={20} />
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: theme.colors.text, fontWeight: "900" }}>{scanTitle(scanStatus, resolvedScanStatus)}</Text>
-                <Text style={{ color: theme.colors.muted, marginTop: 2, lineHeight: 18 }}>{scanCopy(scanStatus, beerScan, quantity, resolvedScanStatus)}</Text>
-              </View>
-              <Text style={{ color: scanPillColor(scanStatus, resolvedScanStatus), fontWeight: "900", fontSize: 12 }}>
-                {scanPill(scanStatus, resolvedScanStatus)}
-              </Text>
             </View>
           </View>
           <Field label="Note" value={note} onChangeText={setNote} placeholder="Optional note" multiline />
@@ -502,57 +453,34 @@ function photoStatusCopy(status: "idle" | "uploading" | "uploaded" | "local" | "
   return "Photo captured";
 }
 
-function scanStatusForQuantity(scan: BeerScanResult, quantity: number): BeerScanStatus {
-  if (scan.status === "unavailable") return "unavailable";
-  if (scan.confidence < 0.45 || scan.detectedCount < 1) return "uncertain";
-  return scan.detectedCount === quantity ? "confirmed" : "mismatch";
+function shouldScanForHighCountStreak(checkIns: BeerCheckIn[], userId: string, quantity: number) {
+  if (quantity < highCountThreshold || !isBeerPhotoScannerConfigured()) return false;
+  const cutoff = Date.now() - highCountWindowMs;
+  const recentOwnLogs = checkIns
+    .filter((item) => item.userId === userId)
+    .filter((item) => new Date(item.createdAt).getTime() >= cutoff)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const previousTwoHighCount = recentOwnLogs.slice(0, 2).every((item) => item.quantity >= highCountThreshold);
+  return recentOwnLogs.length >= 2 && previousTwoHighCount;
 }
 
-function scanTitle(status: "idle" | "scanning" | "scanned" | "failed" | "unavailable", resolvedStatus?: BeerScanStatus) {
-  if (status === "scanning") return "Scanning photo";
-  if (status === "failed") return "Scanner needs review";
-  if (status === "unavailable" || resolvedStatus === "unavailable") return "Scanner unavailable";
-  if (resolvedStatus === "confirmed") return "Count confirmed";
-  if (resolvedStatus === "mismatch") return "Count needs a look";
-  if (resolvedStatus === "uncertain") return "Scanner is unsure";
-  return "Photo scanner";
-}
-
-function scanCopy(
-  status: "idle" | "scanning" | "scanned" | "failed" | "unavailable",
-  scan: BeerScanResult | undefined,
-  quantity: number,
-  resolvedStatus?: BeerScanStatus
+async function runQuietTrustScan(
+  checkInId: string,
+  photoUri: string,
+  claimedCount: number,
+  updateCheckInScan: (checkInId: string, input: { scannedBeerCount?: number; scanConfidence?: number; scanStatus?: BeerScanResult["status"]; scanBoxes?: BeerScanResult["boxes"] }) => void
 ) {
-  if (status === "idle") return "Choose or take a photo and Pintly will estimate how many beers are visible.";
-  if (status === "scanning") return "Counting visible cans, bottles, and pours...";
-  if (status === "failed") return "Scanner could not inspect this photo. Set the count manually before logging.";
-  if (status === "unavailable" || resolvedStatus === "unavailable") {
-    return scan?.explanation || "Scanner is unavailable right now. You can still set the count manually.";
+  try {
+    const scan = await scanBeerPhoto(photoUri, claimedCount);
+    updateCheckInScan(checkInId, {
+      scannedBeerCount: scan.detectedCount,
+      scanConfidence: scan.confidence,
+      scanStatus: scan.status,
+      scanBoxes: scan.boxes
+    });
+  } catch {
+    // Quiet trust scans should never interrupt normal logging.
   }
-  if (!scan) return "Scanner result is not available.";
-  const confidence = `${Math.round(scan.confidence * 100)}%`;
-  if (resolvedStatus === "confirmed") return `Scanner sees ${quantity} beer${quantity === 1 ? "" : "s"} with ${confidence} confidence.`;
-  if (resolvedStatus === "mismatch") {
-    return `Scanner sees about ${scan.detectedCount} beer${scan.detectedCount === 1 ? "" : "s"} with ${confidence} confidence. Your manual count is ${quantity}.`;
-  }
-  return scan.explanation || "Scanner could not confidently count the beers in this photo.";
-}
-
-function scanPill(status: "idle" | "scanning" | "scanned" | "failed" | "unavailable", resolvedStatus?: BeerScanStatus) {
-  if (status === "scanning") return "SCAN";
-  if (status === "failed") return "REVIEW";
-  if (status === "unavailable" || resolvedStatus === "unavailable") return "OFF";
-  if (resolvedStatus === "confirmed") return "OK";
-  if (resolvedStatus === "mismatch") return "CHECK";
-  if (resolvedStatus === "uncertain") return "LOW";
-  return "READY";
-}
-
-function scanPillColor(status: "idle" | "scanning" | "scanned" | "failed" | "unavailable", resolvedStatus?: BeerScanStatus) {
-  if (status === "failed" || status === "unavailable" || resolvedStatus === "mismatch" || resolvedStatus === "unavailable") return theme.colors.gold;
-  if (resolvedStatus === "confirmed") return theme.colors.neon;
-  return theme.colors.dim;
 }
 
 function Field({ label, value, placeholder, onChangeText, keyboardType = "default", multiline }: FieldProps) {

@@ -8,6 +8,7 @@ import {
   GroupJoinRequest,
   GroupMember,
   UpdateCheckInInput,
+  UpdateCheckInScanInput,
   UpdateGroupBackdropInput,
   User
 } from "@/types";
@@ -278,6 +279,20 @@ export async function updateRemoteCheckIn(checkInId: string, input: UpdateCheckI
       quantity: Math.max(1, Math.min(24, Math.floor(input.quantity))),
       note: input.note?.trim() || null,
       count_source: "manual"
+    })
+    .eq("id", checkInId);
+  if (error) throw error;
+}
+
+export async function updateRemoteCheckInScan(checkInId: string, input: UpdateCheckInScanInput) {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from("check_ins")
+    .update({
+      scanned_beer_count: input.scannedBeerCount ?? null,
+      scan_confidence: input.scanConfidence ?? null,
+      scan_status: input.scanStatus ?? null,
+      scan_boxes: input.scanBoxes ?? null
     })
     .eq("id", checkInId);
   if (error) throw error;

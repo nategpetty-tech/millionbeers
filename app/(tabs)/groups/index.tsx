@@ -128,6 +128,43 @@ export default function GroupsScreen() {
             </View>
           ) : null}
 
+          {myGroups.length > 1 ? (
+            <View style={{ marginBottom: 18 }}>
+              <Text style={{ color: theme.colors.gold, fontSize: 12, fontWeight: "900", marginBottom: 10 }}>GROUP LEADERBOARD</Text>
+              <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, padding: 12, gap: 8 }}>
+                {[...myGroups]
+                  .sort((a, b) => b.beerCount - a.beerCount)
+                  .slice(0, 5)
+                  .map((group, index) => (
+                    <View key={group.id} style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6 }}>
+                      <Text style={{ color: index === 0 ? theme.colors.neon : theme.colors.muted, width: 22, fontWeight: "900" }}>{index + 1}</Text>
+                      <View
+                        style={{
+                          width: 36,
+                          height: 36,
+                          borderRadius: 13,
+                          overflow: "hidden",
+                          backgroundColor: theme.colors.cardSoft,
+                          borderWidth: 1,
+                          borderColor: index === 0 ? theme.colors.neon : theme.colors.border
+                        }}
+                      >
+                        <Image source={{ uri: group.backdropUrl ?? groupPhotoFor(group.name) }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: theme.colors.text, fontWeight: "900" }}>{group.name}</Text>
+                        <Text style={{ color: theme.colors.muted, marginTop: 2, fontSize: 12 }}>{group.memberCount} members</Text>
+                      </View>
+                      <View style={{ alignItems: "flex-end" }}>
+                        <Text style={{ color: theme.colors.neon, fontWeight: "900", fontSize: 18 }}>{group.beerCount.toLocaleString()}</Text>
+                        <Text style={{ color: theme.colors.dim, fontSize: 10, fontWeight: "900" }}>BEERS</Text>
+                      </View>
+                    </View>
+                  ))}
+              </View>
+            </View>
+          ) : null}
+
           {showingSearch ? (
             <View>
               {filteredMyGroups.length ? (

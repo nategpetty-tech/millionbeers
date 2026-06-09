@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { Alert, Image } from "react-native";
 import { Modal, Pressable, Text, TextInput, View } from "react-native";
 import { Avatar } from "@/components/Avatar";
-import { ScanBoxesOverlay } from "@/components/ScanBoxesOverlay";
 import { BeerCheckIn } from "@/types";
 import { theme } from "@/theme";
 import { broadPlaceLabel, timeAgo } from "@/utils/format";
@@ -115,7 +114,6 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
           <Text style={{ color: theme.colors.neon, fontWeight: "900", fontSize: 12 }}>{item.quantity} beers counted</Text>
         </View>
       ) : null}
-      {item.scanStatus ? <ScanResultPill item={item} /> : null}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
         <View style={{ flex: 1, paddingRight: 10 }}>
           <Text style={{ color: theme.colors.dim, fontSize: 12 }}>{placeLabel}</Text>
@@ -213,7 +211,6 @@ function PhotoPanel({
       {photoSource && !imageFailed ? (
         <Pressable onPress={onPress} style={({ pressed }) => ({ opacity: pressed ? 0.9 : 1 })}>
           <Image source={{ uri: photoSource }} onError={onError} style={{ width: "100%", aspectRatio: 4 / 3 }} resizeMode="contain" />
-          <ScanBoxesOverlay boxes={item.scanBoxes} photoSize={photoSize} previewSize={previewSize} />
         </Pressable>
       ) : (
         <View style={{ minHeight: 178, alignItems: "center", justifyContent: "center", padding: 18 }}>
@@ -223,40 +220,6 @@ function PhotoPanel({
       )}
     </View>
   );
-}
-
-function ScanResultPill({ item }: { item: BeerCheckIn }) {
-  const copy = scanResultCopy(item);
-  if (!copy) return null;
-  return (
-    <View
-      style={{
-        alignSelf: "flex-start",
-        marginTop: 8,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: theme.radius.pill,
-        backgroundColor: item.scanStatus === "confirmed" ? theme.colors.neonSoft : theme.colors.cardSoft,
-        borderWidth: 1,
-        borderColor: item.scanStatus === "confirmed" ? theme.colors.neon : theme.colors.border
-      }}
-    >
-      <Text style={{ color: item.scanStatus === "confirmed" ? theme.colors.neon : theme.colors.gold, fontWeight: "900", fontSize: 12 }}>
-        {copy}
-      </Text>
-    </View>
-  );
-}
-
-function scanResultCopy(item: BeerCheckIn) {
-  if (item.countSource === "manual" && typeof item.scannedBeerCount === "number" && item.scannedBeerCount !== item.quantity) {
-    return `Manual count used • scanner saw ${item.scannedBeerCount}`;
-  }
-  if (item.scanStatus === "confirmed") return item.countSource === "scanner" ? "Scanner confirmed" : "Count confirmed";
-  if (item.scanStatus === "mismatch") return `Scanner saw ${item.scannedBeerCount ?? "a different count"}`;
-  if (item.scanStatus === "uncertain") return "Scanner unsure";
-  if (item.scanStatus === "unavailable") return "Scanner unavailable";
-  return undefined;
 }
 
 function EditCheckInModal({
@@ -417,8 +380,7 @@ function PhotoViewer({
           style={{ width: "100%", aspectRatio: 3 / 4, borderRadius: theme.radius.lg, overflow: "hidden" }}
         >
           <Image source={{ uri: photoSource }} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
-          <ScanBoxesOverlay boxes={item.scanBoxes} photoSize={photoSize} previewSize={previewSize} />
-        </View>
+    </View>
       </View>
     </Modal>
   );
