@@ -4,7 +4,6 @@ import { Image, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { BeerMap, BeerMapPin } from "@/components/BeerMap";
 import { CheckInModal } from "@/components/CheckInModal";
-import { ProgressBar } from "@/components/ProgressBar";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { SectionTitle } from "@/components/SectionTitle";
 import { StatCard } from "@/components/StatCard";
@@ -318,10 +317,9 @@ function LocationSummary({ pin, onEmptyAction }: { pin?: Pin | null; onEmptyActi
         <Mini label="Beers" value={pin.beerCount} />
         <Mini label="Photos" value={pin.photos.length} />
       </View>
-      <View style={{ marginTop: 12 }}>
-        <ProgressBar current={Math.min(pin.beerCount, 10)} goal={10} color={theme.colors.gold} />
-        <Text style={{ color: theme.colors.dim, marginTop: 6, fontSize: 12 }}>Each pin combines logs from the same physical place.</Text>
-      </View>
+      <Text style={{ color: theme.colors.dim, marginTop: 12, fontSize: 12, lineHeight: 18 }}>
+        This pin combines logs from the same physical place.
+      </Text>
       <View style={{ marginTop: 14 }}>
         <Text style={{ color: theme.colors.text, fontWeight: "900", marginBottom: 10 }}>Photos from this place</Text>
         {pin.photos.length ? (
