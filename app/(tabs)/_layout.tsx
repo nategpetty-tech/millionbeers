@@ -38,6 +38,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="journey" options={{ title: "Journey" }} />
       <Tabs.Screen name="map" options={{ title: "Map" }} />
       <Tabs.Screen name="groups" options={{ title: "Groups" }} />
+      <Tabs.Screen name="groups/join" options={{ href: null }} />
       <Tabs.Screen name="challenges" options={{ title: "Challenges" }} />
       <Tabs.Screen name="passport" options={{ title: "Passport" }} />
     </Tabs>

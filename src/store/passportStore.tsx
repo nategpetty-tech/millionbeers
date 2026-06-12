@@ -7,6 +7,7 @@ import {
   createRemoteGroup,
   deleteRemoteCheckIn,
   fetchRemoteSnapshot,
+  findRemoteGroupByInviteCode,
   rejectRemoteJoinRequest,
   requestRemoteGroupJoin,
   toggleRemoteReaction,
@@ -52,6 +53,8 @@ type PassportActions = {
   createGroup: (input: CreateGroupInput) => Group;
   updateGroupBackdrop: (groupId: string, input: UpdateGroupBackdropInput) => void;
   requestJoinGroup: (groupId: string, source?: GroupJoinRequest["source"]) => void;
+  requestJoinGroupFromInvite: (group: Group, source?: GroupJoinRequest["source"]) => void;
+  findGroupByInviteCode: (inviteCode: string) => Promise<Group | null>;
   approveJoinRequest: (groupId: string, requestId: string) => void;
   rejectJoinRequest: (groupId: string, requestId: string) => void;
   checkInBeer: (input: CheckInInput) => CheckInResult;
@@ -485,6 +488,48 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
     [persist, state.user]
   );
 
+  const requestJoinGroupFromInvite = useCallback(
+    (invitedGroup: Group, source: GroupJoinRequest["source"] = "invite") => {
+      setState((current) => {
+        const pendingRequest: GroupJoinRequest = {
+          id: makeId("join"),
+          userId: current.user.id,
+          name: current.user.name || "Pintly User",
+          avatar: current.user.avatar,
+          avatarUrl: current.user.avatarUrl,
+          requestedAt: new Date().toISOString(),
+          source,
+          status: "pending"
+        };
+        const existing = current.groups.find((group) => group.id === invitedGroup.id);
+        const nextGroups = existing
+          ? current.groups.map((group) => {
+              if (group.id !== invitedGroup.id) return group;
+              if (group.members.some((member) => member.userId === current.user.id)) return group;
+              if (group.pendingRequests.some((request) => request.userId === current.user.id && request.status === "pending")) return group;
+              return { ...group, pendingRequests: [pendingRequest, ...group.pendingRequests] };
+            })
+          : [{ ...invitedGroup, pendingRequests: [pendingRequest, ...(invitedGroup.pendingRequests ?? [])] }, ...current.groups];
+        const next = { ...current, groups: nextGroups };
+        void persist(next);
+        return next;
+      });
+      syncRemote(requestRemoteGroupJoin(invitedGroup.id, state.user, source));
+    },
+    [persist, state.user]
+  );
+
+  const findGroupByInviteCode = useCallback(
+    async (inviteCode: string) => {
+      const normalizedInviteCode = inviteCode.trim().toUpperCase();
+      const localGroup = state.groups.find((group) => group.inviteCode.toUpperCase() === normalizedInviteCode);
+      if (localGroup) return localGroup;
+      const remoteGroup = await findRemoteGroupByInviteCode(normalizedInviteCode, state.user);
+      return remoteGroup;
+    },
+    [state.groups, state.user]
+  );
+
   const approveJoinRequest = useCallback(
     (groupId: string, requestId: string) => {
       setState((current) => {
@@ -802,6 +847,8 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       createGroup,
       updateGroupBackdrop,
       requestJoinGroup,
+      requestJoinGroupFromInvite,
+      findGroupByInviteCode,
       approveJoinRequest,
       rejectJoinRequest,
       checkInBeer,
@@ -822,6 +869,8 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       createGroup,
       updateGroupBackdrop,
       requestJoinGroup,
+      requestJoinGroupFromInvite,
+      findGroupByInviteCode,
       approveJoinRequest,
       rejectJoinRequest,
       checkInBeer,

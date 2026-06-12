@@ -33,6 +33,7 @@ type GroupRow = {
   founder_id: string;
   invite_code: string;
   created_at: string;
+  member_count?: number;
 };
 
 type MembershipRow = {
@@ -167,6 +168,23 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
       checkIns,
       globalCount: Number(globalCount ?? checkIns.reduce((sum, item) => sum + item.quantity, 0))
     };
+  } catch {
+    return null;
+  }
+}
+
+export async function findRemoteGroupByInviteCode(inviteCode: string, currentUser: User): Promise<Group | null> {
+  if (!supabase) return null;
+
+  try {
+    await upsertProfile(currentUser);
+    const { data, error } = await supabase.rpc("find_group_by_invite_code", {
+      invite_code_input: inviteCode.trim().toUpperCase()
+    });
+    if (error) return null;
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return null;
+    return mapGroupRow(row as GroupRow, [], [], [], currentUser.id, false);
   } catch {
     return null;
   }
@@ -348,7 +366,7 @@ async function mapGroupRow(
     backdropUrl: signedBackdropUrl ?? row.backdrop_url ?? undefined,
     backdropStoragePath: row.backdrop_storage_path ?? undefined,
     privacy: row.privacy,
-    memberCount: Math.max(members.length, isAccessible ? members.length : 0),
+    memberCount: Math.max(members.length, row.member_count ?? (isAccessible ? members.length : 0)),
     goal: row.goal,
     beerCount: checkIns.reduce((sum, item) => sum + item.quantity, 0),
     breweryCount: new Set(checkIns.map((item) => item.brewery).filter(Boolean)).size,

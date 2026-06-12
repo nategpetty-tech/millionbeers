@@ -1,4 +1,5 @@
 import { Session } from "@supabase/supabase-js";
+import * as Linking from "expo-linking";
 import React, { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { isSupabaseConfigured, supabase } from "@/services/supabase";
 
@@ -15,10 +16,19 @@ type AuthContextValue = {
   profile: AuthProfile | null;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, displayName: string) => Promise<{ needsEmailConfirmation: boolean }>;
+  sendPasswordReset: (email: string) => Promise<void>;
+  updatePassword: (password: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+function authParamsFromUrl(url: string) {
+  const [, queryAndHash = ""] = url.split("?");
+  const [query = "", hashFromQuery = ""] = queryAndHash.split("#");
+  const hash = url.includes("#") ? url.split("#")[1] : hashFromQuery;
+  return new URLSearchParams([query, hash].filter(Boolean).join("&"));
+}
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useState<Session | null>(null);
@@ -29,18 +39,45 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setLoading(false);
       return;
     }
+    const client = supabase;
 
-    void supabase.auth.getSession().then(({ data }) => {
+    async function handleAuthUrl(url: string | null) {
+      if (!url) return;
+      const params = authParamsFromUrl(url);
+      const accessToken = params.get("access_token");
+      const refreshToken = params.get("refresh_token");
+      const code = params.get("code");
+      if (code) {
+        const { data, error } = await client.auth.exchangeCodeForSession(code);
+        if (!error) setSession(data.session);
+        return;
+      }
+      if (!accessToken || !refreshToken) return;
+      const { data, error } = await client.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken
+      });
+      if (!error) setSession(data.session);
+    }
+
+    void client.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setLoading(false);
     });
+    void Linking.getInitialURL().then(handleAuthUrl);
 
-    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data } = client.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
       setLoading(false);
     });
+    const linkingSubscription = Linking.addEventListener("url", ({ url }) => {
+      void handleAuthUrl(url);
+    });
 
-    return () => data.subscription.unsubscribe();
+    return () => {
+      data.subscription.unsubscribe();
+      linkingSubscription.remove();
+    };
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
@@ -65,6 +102,20 @@ export function AuthProvider({ children }: PropsWithChildren) {
     });
     if (error) throw error;
     return { needsEmailConfirmation: !data.session };
+  }, []);
+
+  const sendPasswordReset = useCallback(async (email: string) => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: "pintly:///reset-password"
+    });
+    if (error) throw error;
+  }, []);
+
+  const updatePassword = useCallback(async (password: string) => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) throw error;
   }, []);
 
   const signOut = useCallback(async () => {
@@ -92,9 +143,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
       profile,
       signIn,
       signUp,
+      sendPasswordReset,
+      updatePassword,
       signOut
     }),
-    [loading, profile, session, signIn, signOut, signUp]
+    [loading, profile, sendPasswordReset, session, signIn, signOut, signUp, updatePassword]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

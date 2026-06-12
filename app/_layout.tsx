@@ -1,4 +1,5 @@
 import { Stack } from "expo-router";
+import { useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { AuthGate } from "@/components/AuthGate";
@@ -19,19 +20,30 @@ export default function RootLayout() {
 
 function AuthenticatedApp() {
   const { profile } = useAuth();
+  const segments = useSegments();
+  const isResetPasswordRoute = segments[0] === "reset-password";
 
   return (
-    <AuthGate>
-      <PassportProvider authenticatedUser={profile ?? undefined}>
-        <StatusBar style="light" />
+    <PassportProvider authenticatedUser={profile ?? undefined}>
+      <StatusBar style="light" />
+      {isResetPasswordRoute ? (
         <Stack
           screenOptions={{
             headerShown: false,
             contentStyle: { backgroundColor: theme.colors.background }
           }}
         />
-        <OnboardingModal />
-      </PassportProvider>
-    </AuthGate>
+      ) : (
+        <AuthGate>
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: theme.colors.background }
+            }}
+          />
+          <OnboardingModal />
+        </AuthGate>
+      )}
+    </PassportProvider>
   );
 }

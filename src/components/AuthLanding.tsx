@@ -6,7 +6,7 @@ import { useAuth } from "@/store/authStore";
 import { theme } from "@/theme";
 
 export function AuthLanding() {
-  const { configured, signIn, signUp } = useAuth();
+  const { configured, signIn, signUp, sendPasswordReset } = useAuth();
   const [mode, setMode] = useState<"create" | "signIn">("create");
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
@@ -30,6 +30,23 @@ export function AuthLanding() {
       }
     } catch (error) {
       Alert.alert("Account error", error instanceof Error ? error.message : "Something went wrong.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resetPassword() {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      Alert.alert("Email needed", "Enter your email address first, then tap Forgot password.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await sendPasswordReset(trimmedEmail);
+      Alert.alert("Check your email", "We sent a Pintly password reset link to that address.");
+    } catch (error) {
+      Alert.alert("Reset failed", error instanceof Error ? error.message : "Could not send a reset email.");
     } finally {
       setBusy(false);
     }
@@ -103,6 +120,12 @@ export function AuthLanding() {
               {busy ? "Working..." : isCreate ? "Create Account" : "Sign In"}
             </Text>
           </Pressable>
+
+          {!isCreate ? (
+            <Pressable onPress={() => void resetPassword()} disabled={busy || !configured} style={{ alignSelf: "center", paddingVertical: 14, paddingHorizontal: 10 }}>
+              <Text style={{ color: theme.colors.gold, fontWeight: "900" }}>Forgot password?</Text>
+            </Pressable>
+          ) : null}
 
           <Text style={{ color: theme.colors.dim, marginTop: 18, lineHeight: 19, fontSize: 12 }}>
             Pintly uses Supabase Auth to separate each tester's account and Supabase Storage for shared check-in photos.

@@ -47,11 +47,11 @@ export default function GroupDetailScreen() {
 
   async function shareInvite() {
     if (!group) return;
-    const link = `pintly://groups/join?code=${group.inviteCode}`;
+    const link = `pintly:///groups/join?code=${group.inviteCode}`;
     try {
       await Share.share({
         title: `Join ${group.name} on Pintly`,
-        message: `Join my Pintly group "${group.name}". Search invite code ${group.inviteCode} or open ${link}`
+        message: `Join my Pintly group "${group.name}": ${link}\n\nIf the link does not open, search invite code ${group.inviteCode} in Pintly.`
       });
     } catch {
       Alert.alert("Invite code", group.inviteCode);
