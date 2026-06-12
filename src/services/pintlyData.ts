@@ -4,6 +4,8 @@ import {
   BeerCheckIn,
   CheckInInput,
   CreateGroupInput,
+  FriendProfile,
+  FriendRequest,
   Group,
   GroupJoinRequest,
   GroupMember,
@@ -11,7 +13,8 @@ import {
   UpdateCheckInPhotoInput,
   UpdateCheckInScanInput,
   UpdateGroupBackdropInput,
-  User
+  User,
+  UserSearchResult
 } from "@/types";
 
 type ProfileRow = {
@@ -53,6 +56,29 @@ type JoinRequestRow = {
   profiles?: ProfileRow | ProfileRow[] | null;
 };
 
+type FriendRow = {
+  friend_id: string;
+  profiles?: ProfileRow | ProfileRow[] | null;
+};
+
+type FriendRequestRow = {
+  id: string;
+  requester_id: string;
+  addressee_id: string;
+  status: FriendRequest["status"];
+  created_at: string;
+  requester?: ProfileRow | ProfileRow[] | null;
+  addressee?: ProfileRow | ProfileRow[] | null;
+};
+
+type UserSearchRow = {
+  user_id: string;
+  display_name: string;
+  avatar: string;
+  avatar_url: string | null;
+  relationship: UserSearchResult["relationship"];
+};
+
 type CheckInGroupRow = {
   group_id: string;
 };
@@ -92,6 +118,8 @@ type CheckInRow = {
 export type RemoteSnapshot = {
   groups: Group[];
   checkIns: BeerCheckIn[];
+  friends: FriendProfile[];
+  friendRequests: FriendRequest[];
   globalCount: number;
 };
 
@@ -120,6 +148,8 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
       { data: groupRows, error: groupError },
       { data: membershipRows, error: membershipError },
       { data: requestRows, error: requestError },
+      { data: friendRows, error: friendError },
+      { data: friendRequestRows, error: friendRequestError },
       { data: globalCount }
     ] = await Promise.all([
       supabase.from("groups").select("*").order("created_at", { ascending: false }),
@@ -131,15 +161,24 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
         .select(
           "id,group_id,user_id,source,status,requested_at,profiles!group_join_requests_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path)"
         ),
+      supabase.from("friendships").select("friend_id,profiles!friendships_friend_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path)"),
+      supabase
+        .from("friend_requests")
+        .select(
+          "id,requester_id,addressee_id,status,created_at,requester:profiles!friend_requests_requester_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path),addressee:profiles!friend_requests_addressee_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path)"
+        )
+        .eq("status", "pending"),
       supabase.rpc("get_global_beer_count")
     ]);
 
-    if (groupError || membershipError || requestError) {
+    if (groupError || membershipError || requestError || friendError || friendRequestError) {
       return null;
     }
 
     const typedMemberships = (membershipRows ?? []) as MembershipRow[];
     const typedRequests = (requestRows ?? []) as JoinRequestRow[];
+    const typedFriends = (friendRows ?? []) as FriendRow[];
+    const typedFriendRequests = (friendRequestRows ?? []) as FriendRequestRow[];
     const accessibleGroupIds = new Set(typedMemberships.map((row) => row.group_id));
     const { data: checkInRows, error: checkInError } = await supabase
       .from("check_ins")
@@ -167,6 +206,8 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
     return {
       groups,
       checkIns,
+      friends: typedFriends.map(mapFriendRow),
+      friendRequests: typedFriendRequests.map((row) => mapFriendRequestRow(row, currentUser.id)),
       globalCount: Number(globalCount ?? checkIns.reduce((sum, item) => sum + item.quantity, 0))
     };
   } catch {
@@ -239,6 +280,49 @@ export async function requestRemoteGroupJoin(groupId: string, user: User, source
     },
     { onConflict: "group_id,user_id" }
   );
+  if (error) throw error;
+}
+
+export async function searchRemoteUsers(query: string): Promise<UserSearchResult[]> {
+  if (!supabase) return [];
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return [];
+  const { data, error } = await supabase.rpc("search_profiles_for_friends", {
+    search_input: trimmed
+  });
+  if (error) throw error;
+  return ((data ?? []) as UserSearchRow[]).map((row) => ({
+    userId: row.user_id,
+    name: row.display_name || "Pintly User",
+    avatar: row.avatar || initialsFor(row.display_name || "Pintly User"),
+    avatarUrl: row.avatar_url ?? undefined,
+    relationship: row.relationship
+  }));
+}
+
+export async function requestRemoteFriend(user: User, addresseeId: string) {
+  if (!supabase) return;
+  await upsertProfile(user);
+  const { error } = await supabase.from("friend_requests").upsert(
+    {
+      requester_id: user.id,
+      addressee_id: addresseeId,
+      status: "pending"
+    },
+    { onConflict: "requester_id,addressee_id" }
+  );
+  if (error) throw error;
+}
+
+export async function approveRemoteFriendRequest(requestId: string) {
+  if (!supabase) return;
+  const { error } = await supabase.rpc("approve_friend_request", { request_id: requestId });
+  if (error) throw error;
+}
+
+export async function rejectRemoteFriendRequest(requestId: string) {
+  if (!supabase) return;
+  const { error } = await supabase.from("friend_requests").update({ status: "rejected" }).eq("id", requestId);
   if (error) throw error;
 }
 
@@ -461,6 +545,42 @@ async function mapCheckInRow(row: CheckInRow): Promise<BeerCheckIn> {
 
 function normalizeProfile(profile: ProfileRow | ProfileRow[] | null | undefined) {
   return Array.isArray(profile) ? profile[0] : profile;
+}
+
+function mapFriendRow(row: FriendRow): FriendProfile {
+  const profile = normalizeProfile(row.profiles);
+  return {
+    userId: row.friend_id,
+    name: profile?.display_name ?? "Pintly User",
+    avatar: profile?.avatar ?? initialsFor(profile?.display_name ?? "Pintly User"),
+    avatarUrl: profile?.avatar_url ?? undefined
+  };
+}
+
+function mapFriendRequestRow(row: FriendRequestRow, currentUserId: string): FriendRequest {
+  const incoming = row.addressee_id === currentUserId;
+  const otherProfile = normalizeProfile(incoming ? row.requester : row.addressee);
+  return {
+    id: row.id,
+    userId: incoming ? row.requester_id : row.addressee_id,
+    name: otherProfile?.display_name ?? "Pintly User",
+    avatar: otherProfile?.avatar ?? initialsFor(otherProfile?.display_name ?? "Pintly User"),
+    avatarUrl: otherProfile?.avatar_url ?? undefined,
+    direction: incoming ? "incoming" : "outgoing",
+    status: row.status,
+    requestedAt: row.created_at
+  };
+}
+
+function initialsFor(name: string) {
+  const initials = name
+    .trim()
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+  return initials || "PS";
 }
 
 function wait(ms: number) {

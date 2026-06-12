@@ -2,14 +2,18 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { seedBadges, seedChallenges, seedCheckIns, seedGlobalCount, seedGroups, seedUser } from "@/data/seed";
 import {
+  approveRemoteFriendRequest,
   approveRemoteJoinRequest,
   createRemoteCheckInFromLocal,
   createRemoteGroup,
   deleteRemoteCheckIn,
   fetchRemoteSnapshot,
   findRemoteGroupByInviteCode,
+  rejectRemoteFriendRequest,
   rejectRemoteJoinRequest,
+  requestRemoteFriend,
   requestRemoteGroupJoin,
+  searchRemoteUsers,
   toggleRemoteReaction,
   updateRemoteCheckIn,
   updateRemoteCheckInPhoto,
@@ -24,6 +28,8 @@ import {
   Challenge,
   CheckInInput,
   CreateGroupInput,
+  FriendProfile,
+  FriendRequest,
   Group,
   GroupJoinRequest,
   GroupMember,
@@ -33,7 +39,8 @@ import {
   UpdateCheckInInput,
   UpdateCheckInPhotoInput,
   UpdateCheckInScanInput,
-  User
+  User,
+  UserSearchResult
 } from "@/types";
 import { makeId, makeUuid } from "@/utils/format";
 import type { AuthProfile } from "./authStore";
@@ -46,6 +53,8 @@ type PassportState = {
   checkIns: BeerCheckIn[];
   challenges: Challenge[];
   badges: Badge[];
+  friends: FriendProfile[];
+  friendRequests: FriendRequest[];
   globalCount: number;
   initialized: boolean;
 };
@@ -58,6 +67,10 @@ type PassportActions = {
   requestJoinGroup: (groupId: string, source?: GroupJoinRequest["source"]) => void;
   requestJoinGroupFromInvite: (group: Group, source?: GroupJoinRequest["source"]) => void;
   findGroupByInviteCode: (inviteCode: string) => Promise<Group | null>;
+  searchUsers: (query: string) => Promise<UserSearchResult[]>;
+  requestFriend: (user: UserSearchResult) => void;
+  approveFriendRequest: (requestId: string) => void;
+  rejectFriendRequest: (requestId: string) => void;
   approveJoinRequest: (groupId: string, requestId: string) => void;
   rejectJoinRequest: (groupId: string, requestId: string) => void;
   checkInBeer: (input: CheckInInput) => CheckInResult;
@@ -101,6 +114,8 @@ function createSeedState(authenticatedUser?: AuthProfile): PassportState {
     checkIns: seedCheckIns,
     challenges: seedChallenges,
     badges: seedBadges,
+    friends: [],
+    friendRequests: [],
     globalCount: seedGlobalCount,
     initialized: true
   };
@@ -313,6 +328,8 @@ function normalizeStoredState(savedState: PassportState): PassportState {
     ...savedState,
     checkIns,
     badges,
+    friends: savedState.friends ?? [],
+    friendRequests: savedState.friendRequests ?? [],
     user: userWithBadges,
     groups: derived.groups,
     challenges,
@@ -349,7 +366,14 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       const normalized = normalizeStoredState(JSON.parse(saved));
       const remote = await fetchRemoteSnapshot(normalized.user);
       const nextState = remote
-        ? normalizeStoredState({ ...normalized, groups: remote.groups, checkIns: mergeRemoteCheckIns(normalized.checkIns, remote.checkIns), globalCount: remote.globalCount })
+        ? normalizeStoredState({
+            ...normalized,
+            groups: remote.groups,
+            checkIns: mergeRemoteCheckIns(normalized.checkIns, remote.checkIns),
+            friends: remote.friends,
+            friendRequests: remote.friendRequests,
+            globalCount: remote.globalCount
+          })
         : normalized;
       setState(nextState);
       await persist(nextState);
@@ -358,7 +382,14 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
     const seeded = createSeedState(authenticatedUser);
     const remote = await fetchRemoteSnapshot(seeded.user);
     const nextState = remote
-      ? normalizeStoredState({ ...seeded, groups: remote.groups, checkIns: mergeRemoteCheckIns(seeded.checkIns, remote.checkIns), globalCount: remote.globalCount })
+      ? normalizeStoredState({
+          ...seeded,
+          groups: remote.groups,
+          checkIns: mergeRemoteCheckIns(seeded.checkIns, remote.checkIns),
+          friends: remote.friends,
+          friendRequests: remote.friendRequests,
+          globalCount: remote.globalCount
+        })
       : seeded;
     setState(nextState);
     await persist(nextState);
@@ -541,6 +572,78 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       return remoteGroup;
     },
     [state.groups, state.user]
+  );
+
+  const searchUsers = useCallback(async (query: string) => {
+    return searchRemoteUsers(query);
+  }, []);
+
+  const requestFriend = useCallback(
+    (target: UserSearchResult) => {
+      if (target.relationship !== "none") return;
+      const optimisticRequest: FriendRequest = {
+        id: makeId("friend"),
+        userId: target.userId,
+        name: target.name,
+        avatar: target.avatar,
+        avatarUrl: target.avatarUrl,
+        direction: "outgoing",
+        status: "pending",
+        requestedAt: new Date().toISOString()
+      };
+      setState((current) => {
+        if (current.friendRequests.some((request) => request.userId === target.userId && request.status === "pending")) return current;
+        const next = { ...current, friendRequests: [optimisticRequest, ...current.friendRequests] };
+        void persist(next);
+        return next;
+      });
+      syncRemote(requestRemoteFriend(state.user, target.userId));
+    },
+    [persist, state.user]
+  );
+
+  const approveFriendRequest = useCallback(
+    (requestId: string) => {
+      setState((current) => {
+        const request = current.friendRequests.find((item) => item.id === requestId);
+        if (!request) return current;
+        const alreadyFriend = current.friends.some((friend) => friend.userId === request.userId);
+        const next = {
+          ...current,
+          friends: alreadyFriend
+            ? current.friends
+            : [
+                {
+                  userId: request.userId,
+                  name: request.name,
+                  avatar: request.avatar,
+                  avatarUrl: request.avatarUrl
+                },
+                ...current.friends
+              ],
+          friendRequests: current.friendRequests.map((item) => (item.id === requestId ? { ...item, status: "approved" as const } : item))
+        };
+        void persist(next);
+        return next;
+      });
+      syncRemote(approveRemoteFriendRequest(requestId));
+    },
+    [persist]
+  );
+
+  const rejectFriendRequest = useCallback(
+    (requestId: string) => {
+      setState((current) => {
+        const next = {
+          ...current,
+          friendRequests: current.friendRequests.map((item) => (item.id === requestId ? { ...item, status: "rejected" as const } : item))
+        };
+        void persist(next);
+        return next;
+      });
+      syncRemote(rejectRemoteFriendRequest(requestId));
+    },
+    [persist]
   );
 
   const approveJoinRequest = useCallback(
@@ -957,6 +1060,10 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       requestJoinGroup,
       requestJoinGroupFromInvite,
       findGroupByInviteCode,
+      searchUsers,
+      requestFriend,
+      approveFriendRequest,
+      rejectFriendRequest,
       approveJoinRequest,
       rejectJoinRequest,
       checkInBeer,
@@ -980,6 +1087,10 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       requestJoinGroup,
       requestJoinGroupFromInvite,
       findGroupByInviteCode,
+      searchUsers,
+      requestFriend,
+      approveFriendRequest,
+      rejectFriendRequest,
       approveJoinRequest,
       rejectJoinRequest,
       checkInBeer,

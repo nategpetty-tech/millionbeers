@@ -16,11 +16,13 @@ import { formatNumber, percent } from "@/utils/format";
 export default function JourneyScreen() {
   const router = useRouter();
   const [checkInOpen, setCheckInOpen] = useState(false);
-  const { user, groups, globalCount, challenges, checkIns, initializeSeedData, reactToCheckIn, updateCheckIn, deleteCheckIn } = usePassport();
+  const { user, groups, friends, globalCount, challenges, checkIns, initializeSeedData, reactToCheckIn, updateCheckIn, deleteCheckIn } = usePassport();
   const nextChallenge = challenges.find((challenge) => challenge.current < challenge.goal) ?? challenges[0];
   const memberGroups = groups.filter((group) => group.members.some((member) => member.userId === user.id));
   const activeGroups = memberGroups.slice(0, 3);
   const memberGroupIds = new Set(memberGroups.map((group) => group.id));
+  const friendIds = new Set(friends.map((friend) => friend.userId));
+  const friendActivity = checkIns.filter((checkIn) => friendIds.has(checkIn.userId)).slice(0, 5);
   const groupActivity = checkIns
     .filter((checkIn) => checkIn.groupIds.some((groupId) => memberGroupIds.has(groupId)))
     .slice(0, 5)
@@ -86,6 +88,15 @@ export default function JourneyScreen() {
               <StatCard label="States" value={user.states} />
             </View>
           </View>
+
+          <SectionTitle title="Friends Activity" detail="Beer logs from people you follow outside of groups." />
+          {friendActivity.length ? (
+            friendActivity.map((checkIn) => (
+              <ActivityItem key={checkIn.id} item={checkIn} currentUserId={user.id} onReact={reactToCheckIn} onEdit={updateCheckIn} onDelete={deleteCheckIn} />
+            ))
+          ) : (
+            <EmptyState title="No friend activity yet" body="Add friends from your Passport to see where they are logging beers." icon="person-add-outline" />
+          )}
 
           <SectionTitle title="Group Activity" detail="Recent beers from crews you belong to." />
           {groupActivity.length ? (

@@ -5,6 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { ActivityItem } from "@/components/ActivityItem";
 import { Avatar } from "@/components/Avatar";
 import { BadgeIcon } from "@/components/BadgeIcon";
+import { FriendsPanel } from "@/components/FriendsPanel";
 import { ProgressBar } from "@/components/ProgressBar";
 import { ProfileModal } from "@/components/ProfileModal";
 import { ScreenHeader } from "@/components/ScreenHeader";
@@ -57,6 +58,8 @@ export default function PassportScreen() {
             <StatCard label="Badges" value={user.badges.length} />
             <StatCard label="Challenges" value={completed || user.challengesCompleted} accent={theme.colors.gold} />
           </View>
+
+          <FriendsPanel />
 
           <SectionTitle title="Badges" detail="Challenge stamps unlocked in Pintly." />
           {completedStamps.length ? (

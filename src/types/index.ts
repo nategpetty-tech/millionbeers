@@ -86,6 +86,33 @@ export type Group = {
   pendingRequests: GroupJoinRequest[];
 };
 
+export type FriendProfile = {
+  userId: string;
+  name: string;
+  avatar: string;
+  avatarUrl?: string;
+  totalBeers?: number;
+};
+
+export type FriendRequest = {
+  id: string;
+  userId: string;
+  name: string;
+  avatar: string;
+  avatarUrl?: string;
+  direction: "incoming" | "outgoing";
+  status: "pending" | "approved" | "rejected";
+  requestedAt: string;
+};
+
+export type UserSearchResult = {
+  userId: string;
+  name: string;
+  avatar: string;
+  avatarUrl?: string;
+  relationship: "none" | "friend" | "incoming" | "outgoing" | "self";
+};
+
 export type BeerCheckIn = {
   id: string;
   userId: string;

@@ -41,12 +41,17 @@ type Pin = {
 };
 
 export default function MapScreen() {
-  const { checkIns, user } = usePassport();
+  const { checkIns, friends, user } = usePassport();
   const [checkInOpen, setCheckInOpen] = useState(false);
+  const [scope, setScope] = useState<"mine" | "friends">("mine");
   const scrollRef = useRef<ScrollView | null>(null);
   const selectedStampY = useRef(0);
   const selectedPhotosY = useRef(0);
-  const scopedCheckIns = useMemo(() => checkIns.filter((item) => item.userId === user.id), [checkIns, user.id]);
+  const friendIds = useMemo(() => new Set(friends.map((friend) => friend.userId)), [friends]);
+  const scopedCheckIns = useMemo(
+    () => checkIns.filter((item) => (scope === "mine" ? item.userId === user.id : item.userId === user.id || friendIds.has(item.userId))),
+    [checkIns, friendIds, scope, user.id]
+  );
   const pins = useMemo(() => buildPlacePins(scopedCheckIns), [scopedCheckIns]);
 
   const cities = useMemo(() => ["All", ...Array.from(new Set(pins.map((pin) => pin.city).filter(Boolean)))], [pins]);
@@ -108,6 +113,11 @@ export default function MapScreen() {
             <StatCard label="Cities" value={summaryStats.cities} />
             <StatCard label="States" value={summaryStats.states} accent={theme.colors.gold} />
             <StatCard label="Total beers" value={summaryStats.beers} />
+          </View>
+
+          <View style={{ flexDirection: "row", gap: 8, backgroundColor: theme.colors.card, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.border, padding: 4 }}>
+            <ScopeButton label="My Stamps" active={scope === "mine"} onPress={() => setScope("mine")} />
+            <ScopeButton label="Friends" active={scope === "friends"} onPress={() => setScope("friends")} />
           </View>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -268,6 +278,23 @@ function buildPlacePins(checkIns: BeerCheckIn[]) {
     });
 
   return pins.sort((a, b) => new Date(b.latestAt).getTime() - new Date(a.latestAt).getTime());
+}
+
+function ScopeButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        flex: 1,
+        alignItems: "center",
+        paddingVertical: 10,
+        borderRadius: theme.radius.pill,
+        backgroundColor: active ? theme.colors.neon : "transparent"
+      }}
+    >
+      <Text style={{ color: active ? theme.colors.ink : theme.colors.muted, fontWeight: "900" }}>{label}</Text>
+    </Pressable>
+  );
 }
 
 function addCheckInToPin(pin: Pin, item: BeerCheckIn) {

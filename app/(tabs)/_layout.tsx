@@ -15,7 +15,7 @@ const icons: Record<string, IconName> = {
 };
 
 export default function TabsLayout() {
-  const { groups, user } = usePassport();
+  const { groups, friendRequests, user } = usePassport();
   const pendingJoinRequests = useMemo(
     () =>
       groups.reduce((total, group) => {
@@ -23,6 +23,10 @@ export default function TabsLayout() {
         return total + group.pendingRequests.filter((request) => request.status === "pending").length;
       }, 0),
     [groups, user.id]
+  );
+  const incomingFriendRequests = useMemo(
+    () => friendRequests.filter((request) => request.status === "pending" && request.direction === "incoming").length,
+    [friendRequests]
   );
 
   return (
@@ -63,7 +67,18 @@ export default function TabsLayout() {
       />
       <Tabs.Screen name="groups/join" options={{ href: null }} />
       <Tabs.Screen name="challenges" options={{ title: "Challenges" }} />
-      <Tabs.Screen name="passport" options={{ title: "Passport" }} />
+      <Tabs.Screen
+        name="passport"
+        options={{
+          title: "Passport",
+          tabBarBadge: incomingFriendRequests || undefined,
+          tabBarBadgeStyle: {
+            backgroundColor: theme.colors.gold,
+            color: theme.colors.ink,
+            fontWeight: "900"
+          }
+        }}
+      />
     </Tabs>
   );
 }
