@@ -1,9 +1,9 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { seedBadges, seedChallenges, seedCheckIns, seedGlobalCount, seedGroups, seedUser } from "@/data/seed";
 import {
   approveRemoteJoinRequest,
-  createRemoteCheckIn,
+  createRemoteCheckInFromLocal,
   createRemoteGroup,
   deleteRemoteCheckIn,
   fetchRemoteSnapshot,
@@ -17,6 +17,7 @@ import {
   updateRemoteGroupBackdrop,
   upsertProfile
 } from "@/services/pintlyData";
+import { configurePhotoUploadQueue, enqueuePhotoUpload, startPhotoUploadQueueLifecycle } from "@/services/photoUploadQueue";
 import {
   Badge,
   BeerCheckIn,
@@ -296,7 +297,9 @@ function normalizeStoredState(savedState: PassportState): PassportState {
   }));
   const checkIns = savedState.checkIns.map((checkIn) => ({
     ...checkIn,
-    quantity: beerQuantity(checkIn)
+    quantity: beerQuantity(checkIn),
+    photoSyncStatus: checkIn.photoSyncStatus ?? (checkIn.photoStoragePath || checkIn.photoUrl ? "synced" : checkIn.photoUri ? "queued" : undefined),
+    remoteSyncStatus: checkIn.remoteSyncStatus ?? "synced"
   }));
   const derived = deriveCounts(savedState.user, checkIns, groups, savedState.globalCount ?? seedGlobalCount);
   const challenges = deriveChallenges(savedState.challenges, checkIns);
@@ -318,6 +321,12 @@ function normalizeStoredState(savedState: PassportState): PassportState {
   };
 }
 
+function mergeRemoteCheckIns(localCheckIns: BeerCheckIn[], remoteCheckIns: BeerCheckIn[]) {
+  const remoteIds = new Set(remoteCheckIns.map((checkIn) => checkIn.id));
+  const localOnly = localCheckIns.filter((checkIn) => !remoteIds.has(checkIn.id) && checkIn.remoteSyncStatus !== "synced");
+  return [...localOnly, ...remoteCheckIns].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
 type PassportProviderProps = PropsWithChildren<{
   authenticatedUser?: AuthProfile;
 }>;
@@ -325,6 +334,7 @@ type PassportProviderProps = PropsWithChildren<{
 export function PassportProvider({ children, authenticatedUser }: PassportProviderProps) {
   const storageKey = storageKeyFor(authenticatedUser?.id ?? seedUser.id);
   const [state, setState] = useState<PassportState>(() => ({ ...createSeedState(authenticatedUser), initialized: false }));
+  const remoteSyncingIds = useRef(new Set<string>());
 
   const persist = useCallback(
     async (nextState: PassportState) => {
@@ -339,7 +349,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       const normalized = normalizeStoredState(JSON.parse(saved));
       const remote = await fetchRemoteSnapshot(normalized.user);
       const nextState = remote
-        ? normalizeStoredState({ ...normalized, groups: remote.groups, checkIns: remote.checkIns, globalCount: remote.globalCount })
+        ? normalizeStoredState({ ...normalized, groups: remote.groups, checkIns: mergeRemoteCheckIns(normalized.checkIns, remote.checkIns), globalCount: remote.globalCount })
         : normalized;
       setState(nextState);
       await persist(nextState);
@@ -348,7 +358,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
     const seeded = createSeedState(authenticatedUser);
     const remote = await fetchRemoteSnapshot(seeded.user);
     const nextState = remote
-      ? normalizeStoredState({ ...seeded, groups: remote.groups, checkIns: remote.checkIns, globalCount: remote.globalCount })
+      ? normalizeStoredState({ ...seeded, groups: remote.groups, checkIns: mergeRemoteCheckIns(seeded.checkIns, remote.checkIns), globalCount: remote.globalCount })
       : seeded;
     setState(nextState);
     await persist(nextState);
@@ -626,6 +636,8 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         photoUri: input.photoUri,
         photoUrl: input.photoUrl,
         photoStoragePath: input.photoStoragePath,
+        photoSyncStatus: input.photoSyncStatus ?? (input.photoStoragePath || input.photoUrl ? "synced" : input.photoUri ? "queued" : undefined),
+        remoteSyncStatus: input.remoteSyncStatus ?? "queued",
         scannedBeerCount: input.scannedBeerCount,
         scanConfidence: input.scanConfidence,
         scanStatus: input.scanStatus,
@@ -673,7 +685,6 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         void persist(next);
         return next;
       });
-      syncRemote(createRemoteCheckIn(input, checkIn));
 
       return { checkIn, ...projectedUnlocks };
     },
@@ -724,6 +735,50 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
     [persist]
   );
 
+  useEffect(() => {
+    const pending = state.checkIns.filter(
+      (checkIn) =>
+        checkIn.userId === state.user.id &&
+        checkIn.remoteSyncStatus !== "synced" &&
+        !remoteSyncingIds.current.has(checkIn.id)
+    );
+    pending.forEach((checkIn) => {
+      remoteSyncingIds.current.add(checkIn.id);
+      setState((current) => {
+        const next = {
+          ...current,
+          checkIns: current.checkIns.map((item) => (item.id === checkIn.id ? { ...item, remoteSyncStatus: "syncing" as const } : item))
+        };
+        void persist(next);
+        return next;
+      });
+      createRemoteCheckInFromLocal(checkIn)
+        .then(() => {
+          setState((current) => {
+            const next = {
+              ...current,
+              checkIns: current.checkIns.map((item) => (item.id === checkIn.id ? { ...item, remoteSyncStatus: "synced" as const } : item))
+            };
+            void persist(next);
+            return next;
+          });
+        })
+        .catch(() => {
+          setState((current) => {
+            const next = {
+              ...current,
+              checkIns: current.checkIns.map((item) => (item.id === checkIn.id ? { ...item, remoteSyncStatus: "failed" as const } : item))
+            };
+            void persist(next);
+            return next;
+          });
+        })
+        .finally(() => {
+          remoteSyncingIds.current.delete(checkIn.id);
+        });
+    });
+  }, [persist, state.checkIns, state.user.id]);
+
   const updateCheckInScan = useCallback(
     (checkInId: string, input: UpdateCheckInScanInput) => {
       setState((current) => {
@@ -759,7 +814,8 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
             ? {
                 ...checkIn,
                 photoUrl: input.photoUrl ?? checkIn.photoUrl,
-                photoStoragePath: input.photoStoragePath ?? checkIn.photoStoragePath
+                photoStoragePath: input.photoStoragePath ?? checkIn.photoStoragePath,
+                photoSyncStatus: input.photoSyncStatus ?? checkIn.photoSyncStatus
               }
             : checkIn
         );
@@ -767,10 +823,36 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         void persist(next);
         return next;
       });
-      syncRemote(updateRemoteCheckInPhoto(checkInId, input));
     },
     [persist]
   );
+
+  useEffect(() => {
+    configurePhotoUploadQueue({
+      onStart: ({ checkInId }) => {
+        updateCheckInPhoto(checkInId, {
+          photoSyncStatus: "syncing"
+        });
+      },
+      onSuccess: async ({ checkInId, photoUrl, photoStoragePath }) => {
+        await updateRemoteCheckInPhoto(checkInId, {
+          photoUrl,
+          photoStoragePath
+        });
+        updateCheckInPhoto(checkInId, {
+          photoUrl,
+          photoStoragePath,
+          photoSyncStatus: "synced"
+        });
+      },
+      onFailure: ({ checkInId, recoverable }) => {
+        updateCheckInPhoto(checkInId, {
+          photoSyncStatus: recoverable ? "queued" : "failed"
+        });
+      }
+    });
+    return startPhotoUploadQueueLifecycle();
+  }, [updateCheckInPhoto]);
 
   const deleteCheckIn = useCallback(
     (checkInId: string) => {

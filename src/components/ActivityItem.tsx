@@ -114,6 +114,58 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
           <Text style={{ color: theme.colors.neon, fontWeight: "900", fontSize: 12 }}>{item.quantity} beers counted</Text>
         </View>
       ) : null}
+      {item.userId === currentUserId && item.photoSyncStatus && item.photoSyncStatus !== "synced" ? (
+        <View
+          style={{
+            alignSelf: "flex-start",
+            marginTop: 10,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 6,
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: theme.radius.pill,
+            backgroundColor: item.photoSyncStatus === "failed" ? "rgba(255, 92, 92, 0.14)" : theme.colors.cardSoft,
+            borderWidth: 1,
+            borderColor: item.photoSyncStatus === "failed" ? theme.colors.danger : theme.colors.border
+          }}
+        >
+          <Ionicons
+            name={item.photoSyncStatus === "failed" ? "cloud-offline-outline" : "cloud-upload-outline"}
+            color={item.photoSyncStatus === "failed" ? theme.colors.danger : theme.colors.gold}
+            size={14}
+          />
+          <Text style={{ color: item.photoSyncStatus === "failed" ? theme.colors.danger : theme.colors.gold, fontWeight: "900", fontSize: 12 }}>
+            {photoSyncCopy(item.photoSyncStatus)}
+          </Text>
+        </View>
+      ) : null}
+      {item.userId === currentUserId && item.remoteSyncStatus && item.remoteSyncStatus !== "synced" ? (
+        <View
+          style={{
+            alignSelf: "flex-start",
+            marginTop: 10,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 6,
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: theme.radius.pill,
+            backgroundColor: item.remoteSyncStatus === "failed" ? "rgba(255, 92, 92, 0.14)" : theme.colors.cardSoft,
+            borderWidth: 1,
+            borderColor: item.remoteSyncStatus === "failed" ? theme.colors.danger : theme.colors.border
+          }}
+        >
+          <Ionicons
+            name={item.remoteSyncStatus === "failed" ? "cloud-offline-outline" : "sync-outline"}
+            color={item.remoteSyncStatus === "failed" ? theme.colors.danger : theme.colors.gold}
+            size={14}
+          />
+          <Text style={{ color: item.remoteSyncStatus === "failed" ? theme.colors.danger : theme.colors.gold, fontWeight: "900", fontSize: 12 }}>
+            {remoteSyncCopy(item.remoteSyncStatus)}
+          </Text>
+        </View>
+      ) : null}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
         <View style={{ flex: 1, paddingRight: 10 }}>
           <Text style={{ color: theme.colors.dim, fontSize: 12 }}>{placeLabel}</Text>
@@ -147,6 +199,18 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
       />
     </View>
   );
+}
+
+function photoSyncCopy(status: NonNullable<BeerCheckIn["photoSyncStatus"]>) {
+  if (status === "syncing") return "Photo syncing";
+  if (status === "failed") return "Photo retry needed";
+  return "Photo queued";
+}
+
+function remoteSyncCopy(status: NonNullable<BeerCheckIn["remoteSyncStatus"]>) {
+  if (status === "syncing") return "Stamp syncing";
+  if (status === "failed") return "Stamp retry pending";
+  return "Stamp queued";
 }
 
 function PhotoThumb({ photoSource, imageFailed, onPress, onError }: { photoSource?: string; imageFailed: boolean; onPress: () => void; onError: () => void }) {

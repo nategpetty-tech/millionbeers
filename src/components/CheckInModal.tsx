@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Image, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { BeerScanResult, isBeerPhotoScannerConfigured, scanBeerPhoto } from "@/services/beerPhotoScanner";
 import { compressBeerPhoto } from "@/services/photoCompression";
-import { isPhotoStorageConfigured, uploadCheckInPhoto } from "@/services/photoStorage";
+import { isPhotoStorageConfigured } from "@/services/photoStorage";
+import { enqueuePhotoUpload } from "@/services/photoUploadQueue";
 import { usePassport } from "@/store/passportStore";
 import type { BeerCheckIn } from "@/types";
 import { theme } from "@/theme";
@@ -22,7 +23,7 @@ const highCountThreshold = 6;
 const highCountWindowMs = 24 * 60 * 60 * 1000;
 
 export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds }: Props) {
-  const { checkInBeer, checkIns, updateCheckInPhoto, updateCheckInScan, groups, user } = usePassport();
+  const { checkInBeer, checkIns, updateCheckInScan, groups, user } = usePassport();
   const [quantity, setQuantity] = useState(1);
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
@@ -209,11 +210,12 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
       note,
       groupIds: selectedGroups,
       photoUri: localPhotoUri,
+      photoSyncStatus: "queued",
       countSource: "manual",
       latitude: coordinates?.latitude,
       longitude: coordinates?.longitude
     });
-    void uploadPhotoAfterStamp(result.checkIn.id, localPhotoUri, user.id, updateCheckInPhoto);
+    void enqueuePhotoUpload({ checkInId: result.checkIn.id, localUri: localPhotoUri, userId: user.id });
     if (shouldRunTrustScan) {
       void runQuietTrustScan(result.checkIn.id, localPhotoUri, quantity, updateCheckInScan);
     }
@@ -466,23 +468,6 @@ async function runQuietTrustScan(
     });
   } catch {
     // Quiet trust scans should never interrupt normal logging.
-  }
-}
-
-async function uploadPhotoAfterStamp(
-  checkInId: string,
-  photoUri: string,
-  userId: string,
-  updateCheckInPhoto: (checkInId: string, input: { photoUrl?: string; photoStoragePath?: string }) => void
-) {
-  try {
-    const uploadedPhoto = await uploadCheckInPhoto(photoUri, userId);
-    updateCheckInPhoto(checkInId, {
-      photoUrl: uploadedPhoto.signedUrl,
-      photoStoragePath: uploadedPhoto.storagePath
-    });
-  } catch (error) {
-    console.warn("Pintly photo upload will need retry", error);
   }
 }
 

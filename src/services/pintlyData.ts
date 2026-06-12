@@ -255,37 +255,44 @@ export async function rejectRemoteJoinRequest(requestId: string) {
 }
 
 export async function createRemoteCheckIn(input: CheckInInput, localCheckIn: BeerCheckIn) {
+  return createRemoteCheckInFromLocal(localCheckIn, input.groupIds);
+}
+
+export async function createRemoteCheckInFromLocal(localCheckIn: BeerCheckIn, groupIds = localCheckIn.groupIds) {
   if (!supabase) return;
-  const { error } = await supabase.from("check_ins").insert({
-    id: localCheckIn.id,
-    user_id: localCheckIn.userId,
-    beer_name: localCheckIn.beerName,
-    brewery: localCheckIn.brewery,
-    style: localCheckIn.style,
-    quantity: localCheckIn.quantity,
-    abv: localCheckIn.abv ?? null,
-    rating: localCheckIn.rating ?? null,
-    city: localCheckIn.location.city,
-    state: localCheckIn.location.state ?? null,
-    country: localCheckIn.location.country ?? null,
-    latitude: localCheckIn.location.latitude ?? null,
-    longitude: localCheckIn.location.longitude ?? null,
-    note: localCheckIn.note ?? null,
-    photo_url: localCheckIn.photoUrl ?? null,
-    photo_storage_path: localCheckIn.photoStoragePath ?? null,
-    scanned_beer_count: localCheckIn.scannedBeerCount ?? null,
-    scan_confidence: localCheckIn.scanConfidence ?? null,
-    scan_status: localCheckIn.scanStatus ?? null,
-    scan_boxes: localCheckIn.scanBoxes ?? null,
-    count_source: localCheckIn.countSource ?? "manual",
-    created_at: localCheckIn.createdAt
-  });
+  const { error } = await supabase.from("check_ins").upsert(
+    {
+      id: localCheckIn.id,
+      user_id: localCheckIn.userId,
+      beer_name: localCheckIn.beerName,
+      brewery: localCheckIn.brewery,
+      style: localCheckIn.style,
+      quantity: localCheckIn.quantity,
+      abv: localCheckIn.abv ?? null,
+      rating: localCheckIn.rating ?? null,
+      city: localCheckIn.location.city,
+      state: localCheckIn.location.state ?? null,
+      country: localCheckIn.location.country ?? null,
+      latitude: localCheckIn.location.latitude ?? null,
+      longitude: localCheckIn.location.longitude ?? null,
+      note: localCheckIn.note ?? null,
+      photo_url: localCheckIn.photoUrl ?? null,
+      photo_storage_path: localCheckIn.photoStoragePath ?? null,
+      scanned_beer_count: localCheckIn.scannedBeerCount ?? null,
+      scan_confidence: localCheckIn.scanConfidence ?? null,
+      scan_status: localCheckIn.scanStatus ?? null,
+      scan_boxes: localCheckIn.scanBoxes ?? null,
+      count_source: localCheckIn.countSource ?? "manual",
+      created_at: localCheckIn.createdAt
+    },
+    { onConflict: "id" }
+  );
   if (error) throw error;
 
-  if (input.groupIds.length) {
+  if (groupIds.length) {
     const { error: groupLinkError } = await supabase
       .from("check_in_groups")
-      .insert(input.groupIds.map((groupId) => ({ check_in_id: localCheckIn.id, group_id: groupId })));
+      .upsert(groupIds.map((groupId) => ({ check_in_id: localCheckIn.id, group_id: groupId })), { onConflict: "check_in_id,group_id" });
     if (groupLinkError) throw groupLinkError;
   }
 }
@@ -438,6 +445,8 @@ async function mapCheckInRow(row: CheckInRow): Promise<BeerCheckIn> {
     note: row.note ?? undefined,
     photoUrl: signedPhotoUrl ?? row.photo_url ?? undefined,
     photoStoragePath: row.photo_storage_path ?? undefined,
+    photoSyncStatus: row.photo_storage_path || row.photo_url ? "synced" : undefined,
+    remoteSyncStatus: "synced",
     scannedBeerCount: row.scanned_beer_count ?? undefined,
     scanConfidence: row.scan_confidence ?? undefined,
     scanStatus: row.scan_status ?? undefined,
