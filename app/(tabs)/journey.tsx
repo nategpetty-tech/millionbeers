@@ -37,7 +37,7 @@ export default function JourneyScreen() {
     void initializeSeedData();
     const interval = setInterval(() => {
       void initializeSeedData();
-    }, 20000);
+    }, 60000);
     return () => clearInterval(interval);
   }, [initializeSeedData]);
 

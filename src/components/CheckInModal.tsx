@@ -22,7 +22,7 @@ const highCountThreshold = 6;
 const highCountWindowMs = 24 * 60 * 60 * 1000;
 
 export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds }: Props) {
-  const { checkInBeer, checkIns, updateCheckInScan, groups, user } = usePassport();
+  const { checkInBeer, checkIns, updateCheckInPhoto, updateCheckInScan, groups, user } = usePassport();
   const [quantity, setQuantity] = useState(1);
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
@@ -191,25 +191,12 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
       return;
     }
 
-    let uploadedPhoto: { signedUrl: string; storagePath: string } | undefined;
-    if (isPhotoStorageConfigured()) {
-      try {
-        setUploadStatus("uploading");
-        uploadedPhoto = await uploadCheckInPhoto(photoUri, user.id);
-        setUploadStatus("uploaded");
-      } catch {
-        setUploadStatus("failed");
-        Alert.alert(
-          "Photo upload failed",
-          "The stamp was not logged because the photo could not upload. Try again so the photo appears in Pintly."
-        );
-        return;
-      }
-    } else {
+    if (!isPhotoStorageConfigured()) {
       Alert.alert("Photo storage unavailable", "Supabase Storage is not configured, so Pintly cannot save this photo stamp yet.");
       return;
     }
 
+    const localPhotoUri = photoUri;
     const stampCity = city.trim() || "Unknown";
     const shouldRunTrustScan = shouldScanForHighCountStreak(checkIns, user.id, quantity);
     const result = checkInBeer({
@@ -221,15 +208,14 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
       country,
       note,
       groupIds: selectedGroups,
-      photoUri,
-      photoUrl: uploadedPhoto?.signedUrl,
-      photoStoragePath: uploadedPhoto?.storagePath,
+      photoUri: localPhotoUri,
       countSource: "manual",
       latitude: coordinates?.latitude,
       longitude: coordinates?.longitude
     });
+    void uploadPhotoAfterStamp(result.checkIn.id, localPhotoUri, user.id, updateCheckInPhoto);
     if (shouldRunTrustScan) {
-      void runQuietTrustScan(result.checkIn.id, photoUri, quantity, updateCheckInScan);
+      void runQuietTrustScan(result.checkIn.id, localPhotoUri, quantity, updateCheckInScan);
     }
     if (result.completedChallenges.length) {
       const challengeNames = result.completedChallenges.map((challenge) => challenge.title).join(", ");
@@ -239,7 +225,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
         `${challengeNames}${badgeNames ? `\n\nBadge unlocked: ${badgeNames}` : ""}`
       );
     } else {
-      Alert.alert("Stamped", `${quantity} beer${quantity === 1 ? "" : "s"} added to Pintly.`);
+      Alert.alert("Stamped", `${quantity} beer${quantity === 1 ? "" : "s"} added to Pintly. The photo will finish syncing in the background.`);
     }
     closeModal();
   }
@@ -480,6 +466,23 @@ async function runQuietTrustScan(
     });
   } catch {
     // Quiet trust scans should never interrupt normal logging.
+  }
+}
+
+async function uploadPhotoAfterStamp(
+  checkInId: string,
+  photoUri: string,
+  userId: string,
+  updateCheckInPhoto: (checkInId: string, input: { photoUrl?: string; photoStoragePath?: string }) => void
+) {
+  try {
+    const uploadedPhoto = await uploadCheckInPhoto(photoUri, userId);
+    updateCheckInPhoto(checkInId, {
+      photoUrl: uploadedPhoto.signedUrl,
+      photoStoragePath: uploadedPhoto.storagePath
+    });
+  } catch (error) {
+    console.warn("Pintly photo upload will need retry", error);
   }
 }
 

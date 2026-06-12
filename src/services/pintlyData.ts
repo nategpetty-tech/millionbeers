@@ -8,6 +8,7 @@ import {
   GroupJoinRequest,
   GroupMember,
   UpdateCheckInInput,
+  UpdateCheckInPhotoInput,
   UpdateCheckInScanInput,
   UpdateGroupBackdropInput,
   User
@@ -316,6 +317,24 @@ export async function updateRemoteCheckInScan(checkInId: string, input: UpdateCh
   if (error) throw error;
 }
 
+export async function updateRemoteCheckInPhoto(checkInId: string, input: UpdateCheckInPhotoInput) {
+  if (!supabase) return;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { error } = await supabase
+      .from("check_ins")
+      .update({
+        photo_url: input.photoUrl ?? null,
+        photo_storage_path: input.photoStoragePath ?? null
+      })
+      .eq("id", checkInId);
+    if (!error) return;
+    lastError = error;
+    await wait(900 * (attempt + 1));
+  }
+  throw lastError;
+}
+
 export async function deleteRemoteCheckIn(checkInId: string) {
   if (!supabase) return;
   const { error } = await supabase.from("check_ins").delete().eq("id", checkInId);
@@ -433,4 +452,8 @@ async function mapCheckInRow(row: CheckInRow): Promise<BeerCheckIn> {
 
 function normalizeProfile(profile: ProfileRow | ProfileRow[] | null | undefined) {
   return Array.isArray(profile) ? profile[0] : profile;
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

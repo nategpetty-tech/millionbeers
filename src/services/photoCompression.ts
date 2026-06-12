@@ -7,7 +7,7 @@ export type CompressedPhoto = {
 };
 
 export async function compressBeerPhoto(uri: string): Promise<CompressedPhoto> {
-  return compressPhoto(uri, { maxWidth: 1600, compress: 0.76 });
+  return compressPhoto(uri, { maxWidth: 1280, compress: 0.68 });
 }
 
 export async function compressProfilePhoto(uri: string): Promise<CompressedPhoto> {

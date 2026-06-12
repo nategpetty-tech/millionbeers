@@ -12,6 +12,7 @@ import {
   requestRemoteGroupJoin,
   toggleRemoteReaction,
   updateRemoteCheckIn,
+  updateRemoteCheckInPhoto,
   updateRemoteCheckInScan,
   updateRemoteGroupBackdrop,
   upsertProfile
@@ -29,6 +30,7 @@ import {
   UpdateProfileInput,
   UpdateGroupBackdropInput,
   UpdateCheckInInput,
+  UpdateCheckInPhotoInput,
   UpdateCheckInScanInput,
   User
 } from "@/types";
@@ -59,6 +61,7 @@ type PassportActions = {
   rejectJoinRequest: (groupId: string, requestId: string) => void;
   checkInBeer: (input: CheckInInput) => CheckInResult;
   updateCheckIn: (checkInId: string, input: UpdateCheckInInput) => void;
+  updateCheckInPhoto: (checkInId: string, input: UpdateCheckInPhotoInput) => void;
   updateCheckInScan: (checkInId: string, input: UpdateCheckInScanInput) => void;
   deleteCheckIn: (checkInId: string) => void;
   reactToCheckIn: (checkInId: string) => void;
@@ -746,6 +749,29 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
     [persist]
   );
 
+  const updateCheckInPhoto = useCallback(
+    (checkInId: string, input: UpdateCheckInPhotoInput) => {
+      setState((current) => {
+        const target = current.checkIns.find((checkIn) => checkIn.id === checkInId);
+        if (!target || target.userId !== current.user.id) return current;
+        const nextCheckIns = current.checkIns.map((checkIn) =>
+          checkIn.id === checkInId
+            ? {
+                ...checkIn,
+                photoUrl: input.photoUrl ?? checkIn.photoUrl,
+                photoStoragePath: input.photoStoragePath ?? checkIn.photoStoragePath
+              }
+            : checkIn
+        );
+        const next = { ...current, checkIns: nextCheckIns };
+        void persist(next);
+        return next;
+      });
+      syncRemote(updateRemoteCheckInPhoto(checkInId, input));
+    },
+    [persist]
+  );
+
   const deleteCheckIn = useCallback(
     (checkInId: string) => {
       setState((current) => {
@@ -853,6 +879,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       rejectJoinRequest,
       checkInBeer,
       updateCheckIn,
+      updateCheckInPhoto,
       updateCheckInScan,
       deleteCheckIn,
       reactToCheckIn,
@@ -875,6 +902,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       rejectJoinRequest,
       checkInBeer,
       updateCheckIn,
+      updateCheckInPhoto,
       updateCheckInScan,
       deleteCheckIn,
       reactToCheckIn,

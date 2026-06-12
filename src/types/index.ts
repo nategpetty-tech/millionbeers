@@ -172,6 +172,11 @@ export type UpdateCheckInScanInput = {
   scanBoxes?: BeerScanBox[];
 };
 
+export type UpdateCheckInPhotoInput = {
+  photoUrl?: string;
+  photoStoragePath?: string;
+};
+
 export type BeerScanBox = {
   x: number;
   y: number;
