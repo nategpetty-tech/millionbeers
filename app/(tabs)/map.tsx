@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Image, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { BeerMap, BeerMapPin } from "@/components/BeerMap";
@@ -43,6 +43,9 @@ type Pin = {
 export default function MapScreen() {
   const { checkIns, user } = usePassport();
   const [checkInOpen, setCheckInOpen] = useState(false);
+  const scrollRef = useRef<ScrollView | null>(null);
+  const selectedStampY = useRef(0);
+  const selectedPhotosY = useRef(0);
   const scopedCheckIns = useMemo(() => checkIns.filter((item) => item.userId === user.id), [checkIns, user.id]);
   const pins = useMemo(() => buildPlacePins(scopedCheckIns), [scopedCheckIns]);
 
@@ -68,9 +71,37 @@ export default function MapScreen() {
     beerCount: pin.beerCount
   }));
 
+  function scrollToSelectedStamp() {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        y: Math.max(0, selectedStampY.current - 12),
+        animated: true
+      });
+    });
+  }
+
+  function scrollToSelectedPhotos() {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        y: Math.max(0, selectedStampY.current + selectedPhotosY.current - 12),
+        animated: true
+      });
+    });
+  }
+
+  function selectPinAndShowPhotos(id: string) {
+    const pin = filteredPins.find((item) => item.id === id) ?? null;
+    setSelected(pin);
+    if (pin?.photos.length) {
+      scrollToSelectedPhotos();
+      return;
+    }
+    scrollToSelectedStamp();
+  }
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 120 }}>
+      <ScrollView ref={scrollRef} contentContainerStyle={{ paddingBottom: 120 }}>
         <ScreenHeader title="Map" subtitle="A personal atlas for the places you have logged beers." />
         <View style={{ paddingHorizontal: 20, gap: 14 }}>
           <View style={{ flexDirection: "row", gap: 10 }}>
@@ -110,10 +141,13 @@ export default function MapScreen() {
           <BeerMap
             pins={mapPins}
             selectedId={visibleSelected?.id}
-            onSelect={(id: string) => setSelected(filteredPins.find((pin) => pin.id === id) ?? null)}
+            onSelect={selectPinAndShowPhotos}
           />
 
           <View
+            onLayout={(event) => {
+              selectedStampY.current = event.nativeEvent.layout.y;
+            }}
             style={{
               backgroundColor: theme.colors.card,
               borderRadius: theme.radius.lg,
@@ -122,7 +156,14 @@ export default function MapScreen() {
               padding: 16
             }}
           >
-            <LocationSummary pin={visibleSelected} onEmptyAction={() => setCheckInOpen(true)} />
+            <LocationSummary
+              pin={visibleSelected}
+              onEmptyAction={() => setCheckInOpen(true)}
+              onViewPhotos={scrollToSelectedPhotos}
+              onPhotosLayout={(y) => {
+                selectedPhotosY.current = y;
+              }}
+            />
           </View>
 
           <SectionTitle title="Visited Places" detail="Tap a row to focus the atlas." />
@@ -275,7 +316,17 @@ function toRadians(value: number) {
   return (value * Math.PI) / 180;
 }
 
-function LocationSummary({ pin, onEmptyAction }: { pin?: Pin | null; onEmptyAction?: () => void }) {
+function LocationSummary({
+  pin,
+  onEmptyAction,
+  onViewPhotos,
+  onPhotosLayout
+}: {
+  pin?: Pin | null;
+  onEmptyAction?: () => void;
+  onViewPhotos?: () => void;
+  onPhotosLayout?: (y: number) => void;
+}) {
   const [previewPhoto, setPreviewPhoto] = useState<PinPhoto | null>(null);
 
   if (!pin) {
@@ -305,7 +356,28 @@ function LocationSummary({ pin, onEmptyAction }: { pin?: Pin | null; onEmptyActi
   return (
     <View>
       <Text style={{ color: theme.colors.gold, fontWeight: "900", letterSpacing: 1, fontSize: 12 }}>SELECTED STAMP</Text>
-      <Text style={{ color: theme.colors.text, fontSize: 19, fontWeight: "900", marginTop: 5 }}>{pin.title}</Text>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10, marginTop: 5 }}>
+        <Text style={{ color: theme.colors.text, fontSize: 19, fontWeight: "900", flex: 1 }}>{pin.title}</Text>
+        {pin.photos.length ? (
+          <Pressable
+            onPress={onViewPhotos}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 5,
+              backgroundColor: theme.colors.neonSoft,
+              borderWidth: 1,
+              borderColor: theme.colors.neon,
+              borderRadius: theme.radius.pill,
+              paddingHorizontal: 10,
+              paddingVertical: 7
+            }}
+          >
+            <Ionicons name="images-outline" color={theme.colors.neon} size={15} />
+            <Text style={{ color: theme.colors.neon, fontWeight: "900", fontSize: 12 }}>Photos</Text>
+          </Pressable>
+        ) : null}
+      </View>
       <Text style={{ color: theme.colors.muted, marginTop: 3 }}>
         {pin.visitors.join(", ")}
       </Text>
@@ -320,7 +392,12 @@ function LocationSummary({ pin, onEmptyAction }: { pin?: Pin | null; onEmptyActi
       <Text style={{ color: theme.colors.dim, marginTop: 12, fontSize: 12, lineHeight: 18 }}>
         This pin combines logs from the same physical place.
       </Text>
-      <View style={{ marginTop: 14 }}>
+      <View
+        onLayout={(event) => {
+          onPhotosLayout?.(event.nativeEvent.layout.y);
+        }}
+        style={{ marginTop: 14 }}
+      >
         <Text style={{ color: theme.colors.text, fontWeight: "900", marginBottom: 10 }}>Photos from this place</Text>
         {pin.photos.length ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
