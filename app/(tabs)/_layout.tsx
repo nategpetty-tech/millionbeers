@@ -1,5 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
+import { useMemo } from "react";
+import { usePassport } from "@/store/passportStore";
 import { theme } from "@/theme";
 
 type IconName = keyof typeof Ionicons.glyphMap;
@@ -13,6 +15,16 @@ const icons: Record<string, IconName> = {
 };
 
 export default function TabsLayout() {
+  const { groups, user } = usePassport();
+  const pendingJoinRequests = useMemo(
+    () =>
+      groups.reduce((total, group) => {
+        if (group.founderId !== user.id) return total;
+        return total + group.pendingRequests.filter((request) => request.status === "pending").length;
+      }, 0),
+    [groups, user.id]
+  );
+
   return (
     <Tabs
       screenOptions={({ route }) => ({
@@ -37,7 +49,18 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="journey" options={{ title: "Journey" }} />
       <Tabs.Screen name="map" options={{ title: "Map" }} />
-      <Tabs.Screen name="groups" options={{ title: "Groups" }} />
+      <Tabs.Screen
+        name="groups"
+        options={{
+          title: "Groups",
+          tabBarBadge: pendingJoinRequests || undefined,
+          tabBarBadgeStyle: {
+            backgroundColor: theme.colors.gold,
+            color: theme.colors.ink,
+            fontWeight: "900"
+          }
+        }}
+      />
       <Tabs.Screen name="groups/join" options={{ href: null }} />
       <Tabs.Screen name="challenges" options={{ title: "Challenges" }} />
       <Tabs.Screen name="passport" options={{ title: "Passport" }} />

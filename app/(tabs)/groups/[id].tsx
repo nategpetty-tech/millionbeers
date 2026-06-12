@@ -236,6 +236,44 @@ export default function GroupDetailScreen() {
         </View>
 
         <View style={{ paddingHorizontal: 20 }}>
+          {isFounder && pendingRequests.length && segment !== "Overview" ? (
+            <Pressable
+              onPress={() => setSegment("Overview")}
+              style={({ pressed }) => ({
+                opacity: pressed ? 0.84 : 1,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 10,
+                backgroundColor: theme.colors.card,
+                borderRadius: theme.radius.lg,
+                borderWidth: 1,
+                borderColor: theme.colors.gold,
+                padding: 14,
+                marginBottom: 14
+              })}
+            >
+              <View
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 18,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: theme.colors.gold
+                }}
+              >
+                <Ionicons name="person-add-outline" color={theme.colors.ink} size={18} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: theme.colors.text, fontWeight: "900" }}>
+                  {pendingRequests.length} join {pendingRequests.length === 1 ? "request" : "requests"} waiting
+                </Text>
+                <Text style={{ color: theme.colors.muted, marginTop: 2 }}>Tap to review and approve members.</Text>
+              </View>
+              <Ionicons name="chevron-forward" color={theme.colors.gold} size={20} />
+            </Pressable>
+          ) : null}
+
           {segment === "Overview" ? (
             <View style={{ gap: 14 }}>
               {isFounder ? (

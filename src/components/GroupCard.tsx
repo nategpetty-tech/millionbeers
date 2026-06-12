@@ -9,9 +9,10 @@ import { ProgressBar } from "./ProgressBar";
 
 type Props = {
   group: Group;
+  pendingRequestCount?: number;
 };
 
-export function GroupCard({ group }: Props) {
+export function GroupCard({ group, pendingRequestCount = 0 }: Props) {
   const groupImage = group.backdropUrl ?? groupPhotoFor(group.name);
   return (
     <Link href={`/groups/${group.id}`} asChild>
@@ -45,9 +46,10 @@ export function GroupCard({ group }: Props) {
             <Text style={{ color: theme.colors.muted, marginTop: 4 }}>
               {group.memberCount} members • {formatNumber(group.beerCount)} beers
             </Text>
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
               <Pill icon="people-outline" text={`${group.memberCount} members`} />
               <Pill icon="chatbubbles-outline" text="Feed" />
+              {pendingRequestCount ? <Pill icon="person-add-outline" text={`${pendingRequestCount} request${pendingRequestCount === 1 ? "" : "s"}`} accent /> : null}
             </View>
             <View style={{ marginTop: 10 }}>
               <ProgressBar current={group.beerCount} goal={group.goal} />
@@ -67,21 +69,21 @@ export function GroupCard({ group }: Props) {
   );
 }
 
-function Pill({ icon, text }: { icon: keyof typeof Ionicons.glyphMap; text: string }) {
+function Pill({ icon, text, accent = false }: { icon: keyof typeof Ionicons.glyphMap; text: string; accent?: boolean }) {
   return (
     <View
       style={{
         flexDirection: "row",
         alignItems: "center",
         gap: 4,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: accent ? theme.colors.gold : theme.colors.surface,
         borderRadius: theme.radius.pill,
         paddingHorizontal: 8,
         paddingVertical: 5
       }}
     >
-      <Ionicons name={icon} color={theme.colors.muted} size={12} />
-      <Text style={{ color: theme.colors.muted, fontSize: 11, fontWeight: "800" }}>{text}</Text>
+      <Ionicons name={icon} color={accent ? theme.colors.ink : theme.colors.muted} size={12} />
+      <Text style={{ color: accent ? theme.colors.ink : theme.colors.muted, fontSize: 11, fontWeight: "900" }}>{text}</Text>
     </View>
   );
 }

@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Image, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -10,6 +11,7 @@ import { theme } from "@/theme";
 import { groupPhotoFor } from "@/utils/groupVisuals";
 
 export default function GroupsScreen() {
+  const router = useRouter();
   const { groups, user, requestJoinGroup, initializeSeedData } = usePassport();
   const [query, setQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -23,6 +25,17 @@ export default function GroupsScreen() {
           !group.members.some((member) => member.userId === user.id) &&
           group.pendingRequests.some((request) => request.userId === user.id && request.status === "pending")
       ),
+    [groups, user.id]
+  );
+  const founderRequestGroups = useMemo(
+    () =>
+      groups
+        .filter((group) => group.founderId === user.id)
+        .map((group) => ({
+          group,
+          pendingCount: group.pendingRequests.filter((request) => request.status === "pending").length
+        }))
+        .filter((item) => item.pendingCount > 0),
     [groups, user.id]
   );
   const searchResults = useMemo(
@@ -39,6 +52,14 @@ export default function GroupsScreen() {
     [myGroups, normalizedQuery]
   );
   const showingSearch = normalizedQuery.length > 0;
+
+  useEffect(() => {
+    void initializeSeedData();
+    const interval = setInterval(() => {
+      void initializeSeedData();
+    }, 20000);
+    return () => clearInterval(interval);
+  }, [initializeSeedData]);
 
   useEffect(() => {
     if (normalizedQuery.length < 2) return;
@@ -99,6 +120,49 @@ export default function GroupsScreen() {
               Search a group name or paste an invite code. Founders approve requests before group photos and feeds become visible.
             </Text>
           </View>
+
+          {founderRequestGroups.length ? (
+            <View style={{ marginBottom: 16 }}>
+              <Text style={{ color: theme.colors.gold, fontSize: 12, fontWeight: "900", marginBottom: 10 }}>REQUESTS TO REVIEW</Text>
+              <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.gold, padding: 12, gap: 8 }}>
+                {founderRequestGroups.map(({ group, pendingCount }) => (
+                  <Pressable
+                    key={group.id}
+                    onPress={() => router.push(`/groups/${group.id}`)}
+                    style={({ pressed }) => ({
+                      opacity: pressed ? 0.82 : 1,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 10,
+                      backgroundColor: theme.colors.surface,
+                      borderRadius: theme.radius.md,
+                      padding: 12
+                    })}
+                  >
+                    <View
+                      style={{
+                        width: 34,
+                        height: 34,
+                        borderRadius: 17,
+                        backgroundColor: theme.colors.gold,
+                        alignItems: "center",
+                        justifyContent: "center"
+                      }}
+                    >
+                      <Ionicons name="person-add-outline" color={theme.colors.ink} size={18} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: theme.colors.text, fontWeight: "900" }}>{group.name}</Text>
+                      <Text style={{ color: theme.colors.muted, marginTop: 2 }}>
+                        {pendingCount} {pendingCount === 1 ? "person wants" : "people want"} to join
+                      </Text>
+                    </View>
+                    <Text style={{ color: theme.colors.gold, fontWeight: "900" }}>Review</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
 
           {pendingMemberships.length ? (
             <View style={{ marginBottom: 16 }}>
@@ -170,7 +234,13 @@ export default function GroupsScreen() {
               {filteredMyGroups.length ? (
                 <>
                   <Text style={{ color: theme.colors.neon, fontSize: 12, fontWeight: "900", marginBottom: 10 }}>YOUR GROUPS</Text>
-                  {filteredMyGroups.map((group) => <GroupCard key={group.id} group={group} />)}
+                  {filteredMyGroups.map((group) => (
+                    <GroupCard
+                      key={group.id}
+                      group={group}
+                      pendingRequestCount={group.founderId === user.id ? group.pendingRequests.filter((request) => request.status === "pending").length : 0}
+                    />
+                  ))}
                 </>
               ) : null}
               {searchResults.length ? <Text style={{ color: theme.colors.gold, fontSize: 12, fontWeight: "900", marginBottom: 10 }}>REQUEST TO JOIN</Text> : null}
@@ -244,7 +314,13 @@ export default function GroupsScreen() {
           ) : myGroups.length ? (
             <View>
               <Text style={{ color: theme.colors.neon, fontSize: 12, fontWeight: "900", marginBottom: 10 }}>YOUR GROUPS</Text>
-              {myGroups.map((group) => <GroupCard key={group.id} group={group} />)}
+              {myGroups.map((group) => (
+                <GroupCard
+                  key={group.id}
+                  group={group}
+                  pendingRequestCount={group.founderId === user.id ? group.pendingRequests.filter((request) => request.status === "pending").length : 0}
+                />
+              ))}
             </View>
           ) : (
             <EmptyState title="No groups yet" body="Create your first group and set a shared beer goal." icon="people-outline" />
