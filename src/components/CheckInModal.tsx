@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
-import { Alert, Image, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Image, Keyboard, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { BeerScanResult, isBeerPhotoScannerConfigured, scanBeerPhoto } from "@/services/beerPhotoScanner";
 import { compressBeerPhoto } from "@/services/photoCompression";
 import { isPhotoStorageConfigured } from "@/services/photoStorage";
@@ -244,7 +244,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
             <Ionicons name="close" color={theme.colors.text} size={28} />
           </Pressable>
         </View>
-        <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 0, gap: 14 }}>
+        <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 0, gap: 14 }} keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled">
           <Pressable
             onPress={() => void openCamera()}
             disabled={cameraOpening}
@@ -482,6 +482,9 @@ function Field({ label, value, placeholder, onChangeText, keyboardType = "defaul
         placeholderTextColor={theme.colors.dim}
         keyboardType={keyboardType}
         multiline={multiline}
+        returnKeyType={multiline ? "done" : "default"}
+        blurOnSubmit={multiline}
+        onSubmitEditing={multiline ? Keyboard.dismiss : undefined}
         style={{
           minHeight: multiline ? 92 : 48,
           color: theme.colors.text,
