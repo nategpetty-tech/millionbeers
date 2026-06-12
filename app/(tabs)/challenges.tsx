@@ -17,7 +17,7 @@ export default function ChallengesScreen() {
           {activeChallenges.length ? (
             activeChallenges.map((challenge) => <ChallengeCard key={challenge.id} challenge={challenge} />)
           ) : (
-            <EmptyState title="All challenges complete" body="Completed challenge stamps now live in your Passport badges." icon="trophy-outline" />
+            <EmptyState title="All challenges complete" body="Completed challenge stamps now live in your Profile badges." icon="trophy-outline" />
           )}
         </View>
       </ScrollView>

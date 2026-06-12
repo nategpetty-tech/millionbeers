@@ -95,7 +95,7 @@ export default function JourneyScreen() {
               <ActivityItem key={checkIn.id} item={checkIn} currentUserId={user.id} onReact={reactToCheckIn} onEdit={updateCheckIn} onDelete={deleteCheckIn} />
             ))
           ) : (
-            <EmptyState title="No friend activity yet" body="Add friends from your Passport to see where they are logging beers." icon="person-add-outline" />
+            <EmptyState title="No friend activity yet" body="Add friends from the Friends tab to see where they are logging beers." icon="person-add-outline" />
           )}
 
           <SectionTitle title="Group Activity" detail="Recent beers from crews you belong to." />

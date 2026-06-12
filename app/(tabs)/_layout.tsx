@@ -10,8 +10,8 @@ const icons: Record<string, IconName> = {
   journey: "trail-sign-outline",
   map: "map-outline",
   groups: "people-outline",
-  challenges: "trophy-outline",
-  passport: "id-card-outline"
+  friends: "person-add-outline",
+  profile: "id-card-outline"
 };
 
 export default function TabsLayout() {
@@ -66,11 +66,11 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen name="groups/join" options={{ href: null }} />
-      <Tabs.Screen name="challenges" options={{ title: "Challenges" }} />
+      <Tabs.Screen name="challenges" options={{ href: null }} />
       <Tabs.Screen
-        name="passport"
+        name="friends"
         options={{
-          title: "Passport",
+          title: "Friends",
           tabBarBadge: incomingFriendRequests || undefined,
           tabBarBadgeStyle: {
             backgroundColor: theme.colors.gold,
@@ -79,6 +79,13 @@ export default function TabsLayout() {
           }
         }}
       />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: "Profile"
+        }}
+      />
+      <Tabs.Screen name="passport" options={{ href: null }} />
     </Tabs>
   );
 }
