@@ -216,7 +216,10 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
       return null;
     }
 
-    const checkIns = await Promise.all(((checkInRows ?? []) as CheckInRow[]).map(mapCheckInRow));
+    const mappedCheckIns = await Promise.all(((checkInRows ?? []) as CheckInRow[]).map(mapCheckInRow));
+    const checkIns = friendsFeatureEnabled
+      ? mappedCheckIns
+      : mappedCheckIns.filter((checkIn) => checkIn.userId === currentUser.id || checkIn.groupIds.some((groupId) => accessibleGroupIds.has(groupId)));
     const groups = await Promise.all(
       ((groupRows ?? []) as GroupRow[]).map((group) =>
         mapGroupRow(

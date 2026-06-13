@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { friendsFeatureEnabled } from "@/config/features";
 import { seedBadges, seedChallenges, seedCheckIns, seedGlobalCount, seedGroups, seedUser } from "@/data/seed";
 import {
   approveRemoteFriendRequest,
@@ -329,8 +330,8 @@ function normalizeStoredState(savedState: PassportState): PassportState {
     ...savedState,
     checkIns,
     badges,
-    friends: savedState.friends ?? [],
-    friendRequests: savedState.friendRequests ?? [],
+    friends: friendsFeatureEnabled ? savedState.friends ?? [] : [],
+    friendRequests: friendsFeatureEnabled ? savedState.friendRequests ?? [] : [],
     user: userWithBadges,
     groups: derived.groups,
     challenges,
@@ -584,11 +585,13 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
   );
 
   const searchUsers = useCallback(async (query: string) => {
+    if (!friendsFeatureEnabled) return [];
     return searchRemoteUsers(query);
   }, []);
 
   const requestFriend = useCallback(
     (target: UserSearchResult) => {
+      if (!friendsFeatureEnabled) return;
       if (target.relationship !== "none") return;
       const optimisticRequest: FriendRequest = {
         id: makeId("friend"),
@@ -613,6 +616,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
 
   const approveFriendRequest = useCallback(
     (requestId: string) => {
+      if (!friendsFeatureEnabled) return;
       setState((current) => {
         const request = current.friendRequests.find((item) => item.id === requestId);
         if (!request) return current;
@@ -642,6 +646,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
 
   const rejectFriendRequest = useCallback(
     (requestId: string) => {
+      if (!friendsFeatureEnabled) return;
       setState((current) => {
         const next = {
           ...current,
