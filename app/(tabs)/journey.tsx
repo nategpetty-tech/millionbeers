@@ -9,6 +9,7 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { ProgressBar } from "@/components/ProgressBar";
 import { SectionTitle } from "@/components/SectionTitle";
 import { StatCard } from "@/components/StatCard";
+import { friendsFeatureEnabled } from "@/config/features";
 import { usePassport } from "@/store/passportStore";
 import { theme } from "@/theme";
 import { formatNumber, percent } from "@/utils/format";
@@ -89,14 +90,18 @@ export default function JourneyScreen() {
             </View>
           </View>
 
-          <SectionTitle title="Friends Activity" detail="Beer logs from people you follow outside of groups." />
-          {friendActivity.length ? (
-            friendActivity.map((checkIn) => (
-              <ActivityItem key={checkIn.id} item={checkIn} currentUserId={user.id} onReact={reactToCheckIn} onEdit={updateCheckIn} onDelete={deleteCheckIn} />
-            ))
-          ) : (
-            <EmptyState title="No friend activity yet" body="Add friends from the Friends tab to see where they are logging beers." icon="person-add-outline" />
-          )}
+          {friendsFeatureEnabled ? (
+            <>
+              <SectionTitle title="Friends Activity" detail="Beer logs from people you follow outside of groups." />
+              {friendActivity.length ? (
+                friendActivity.map((checkIn) => (
+                  <ActivityItem key={checkIn.id} item={checkIn} currentUserId={user.id} onReact={reactToCheckIn} onEdit={updateCheckIn} onDelete={deleteCheckIn} />
+                ))
+              ) : (
+                <EmptyState title="No friend activity yet" body="Add friends from the Friends tab to see where they are logging beers." icon="person-add-outline" />
+              )}
+            </>
+          ) : null}
 
           <SectionTitle title="Group Activity" detail="Recent beers from crews you belong to." />
           {groupActivity.length ? (

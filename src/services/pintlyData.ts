@@ -1,5 +1,6 @@
 import { supabase } from "@/services/supabase";
 import { createSignedGroupBackdropUrl, createSignedPhotoUrl } from "@/services/photoStorage";
+import { friendsFeatureEnabled } from "@/config/features";
 import {
   BeerCheckIn,
   CheckInInput,
@@ -169,13 +170,17 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
         .select(
           "id,group_id,user_id,source,status,requested_at,profiles!group_join_requests_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path)"
         ),
-      supabase.from("friendships").select("friend_id,profiles!friendships_friend_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path)"),
-      supabase
-        .from("friend_requests")
-        .select(
-          "id,requester_id,addressee_id,status,created_at,requester:profiles!friend_requests_requester_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path),addressee:profiles!friend_requests_addressee_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path)"
-        )
-        .eq("status", "pending"),
+      friendsFeatureEnabled
+        ? supabase.from("friendships").select("friend_id,profiles!friendships_friend_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path)")
+        : Promise.resolve({ data: [], error: null }),
+      friendsFeatureEnabled
+        ? supabase
+            .from("friend_requests")
+            .select(
+              "id,requester_id,addressee_id,status,created_at,requester:profiles!friend_requests_requester_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path),addressee:profiles!friend_requests_addressee_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path)"
+            )
+            .eq("status", "pending")
+        : Promise.resolve({ data: [], error: null }),
       supabase.rpc("get_global_beer_count")
     ]);
 
@@ -306,7 +311,7 @@ export async function requestRemoteGroupJoin(groupId: string, user: User, source
 }
 
 export async function searchRemoteUsers(query: string): Promise<UserSearchResult[]> {
-  if (!supabase) return [];
+  if (!supabase || !friendsFeatureEnabled) return [];
   const trimmed = query.trim();
   if (trimmed.length < 2) return [];
   const { data, error } = await supabase.rpc("search_profiles_for_friends", {
@@ -323,7 +328,7 @@ export async function searchRemoteUsers(query: string): Promise<UserSearchResult
 }
 
 export async function requestRemoteFriend(user: User, addresseeId: string) {
-  if (!supabase) return;
+  if (!supabase || !friendsFeatureEnabled) return;
   await upsertProfile(user);
   const { error } = await supabase.from("friend_requests").upsert(
     {
@@ -337,13 +342,13 @@ export async function requestRemoteFriend(user: User, addresseeId: string) {
 }
 
 export async function approveRemoteFriendRequest(requestId: string) {
-  if (!supabase) return;
+  if (!supabase || !friendsFeatureEnabled) return;
   const { error } = await supabase.rpc("approve_friend_request", { request_id: requestId });
   if (error) throw error;
 }
 
 export async function rejectRemoteFriendRequest(requestId: string) {
-  if (!supabase) return;
+  if (!supabase || !friendsFeatureEnabled) return;
   const { error } = await supabase.from("friend_requests").update({ status: "rejected" }).eq("id", requestId);
   if (error) throw error;
 }

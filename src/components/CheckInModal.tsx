@@ -345,7 +345,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
             <Text style={{ color: theme.colors.muted, flex: 1, lineHeight: 18 }}>
               {selectedGroups.length
                 ? `Automatically posts to ${selectedGroups.length} group${selectedGroups.length === 1 ? "" : "s"} you belong to.`
-                : "Create or join a group to share stamps with friends automatically."}
+                : "Create or join a group to share stamps with your crew automatically."}
             </Text>
           </View>
           <View style={{ flexDirection: "row", gap: 10 }}>

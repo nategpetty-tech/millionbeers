@@ -7,6 +7,7 @@ import { CheckInModal } from "@/components/CheckInModal";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { SectionTitle } from "@/components/SectionTitle";
 import { StatCard } from "@/components/StatCard";
+import { friendsFeatureEnabled } from "@/config/features";
 import { usePassport } from "@/store/passportStore";
 import { theme } from "@/theme";
 import type { BeerCheckIn } from "@/types";
@@ -48,9 +49,10 @@ export default function MapScreen() {
   const selectedStampY = useRef(0);
   const selectedPhotosY = useRef(0);
   const friendIds = useMemo(() => new Set(friends.map((friend) => friend.userId)), [friends]);
+  const friendLastCheckIns = useMemo(() => latestFriendCheckIns(checkIns, friendIds), [checkIns, friendIds]);
   const scopedCheckIns = useMemo(
-    () => checkIns.filter((item) => (scope === "mine" ? item.userId === user.id : item.userId === user.id || friendIds.has(item.userId))),
-    [checkIns, friendIds, scope, user.id]
+    () => (scope === "mine" || !friendsFeatureEnabled ? checkIns.filter((item) => item.userId === user.id) : friendLastCheckIns),
+    [checkIns, friendLastCheckIns, scope, user.id]
   );
   const pins = useMemo(() => buildPlacePins(scopedCheckIns), [scopedCheckIns]);
 
@@ -104,21 +106,32 @@ export default function MapScreen() {
     scrollToSelectedStamp();
   }
 
+  function changeScope(nextScope: "mine" | "friends") {
+    setScope(nextScope);
+    setCity("All");
+    setSelected(null);
+  }
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <ScrollView ref={scrollRef} contentContainerStyle={{ paddingBottom: 120 }}>
-        <ScreenHeader title="Map" subtitle="A personal atlas for the places you have logged beers." />
+        <ScreenHeader
+          title="Map"
+          subtitle={scope === "mine" || !friendsFeatureEnabled ? "A personal atlas for the places you have logged beers." : "The latest drinking location each friend has shared."}
+        />
         <View style={{ paddingHorizontal: 20, gap: 14 }}>
           <View style={{ flexDirection: "row", gap: 10 }}>
             <StatCard label="Cities" value={summaryStats.cities} />
             <StatCard label="States" value={summaryStats.states} accent={theme.colors.gold} />
-            <StatCard label="Total beers" value={summaryStats.beers} />
+            <StatCard label={scope === "mine" ? "Total beers" : "Latest beers"} value={summaryStats.beers} />
           </View>
 
-          <View style={{ flexDirection: "row", gap: 8, backgroundColor: theme.colors.card, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.border, padding: 4 }}>
-            <ScopeButton label="My Stamps" active={scope === "mine"} onPress={() => setScope("mine")} />
-            <ScopeButton label="Friends" active={scope === "friends"} onPress={() => setScope("friends")} />
-          </View>
+          {friendsFeatureEnabled ? (
+            <View style={{ flexDirection: "row", gap: 8, backgroundColor: theme.colors.card, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.border, padding: 4 }}>
+              <ScopeButton label="My Stamps" active={scope === "mine"} onPress={() => changeScope("mine")} />
+              <ScopeButton label="Friend Last Logs" active={scope === "friends"} onPress={() => changeScope("friends")} />
+            </View>
+          ) : null}
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View style={{ flexDirection: "row", gap: 8 }}>
@@ -168,7 +181,8 @@ export default function MapScreen() {
           >
             <LocationSummary
               pin={visibleSelected}
-              onEmptyAction={() => setCheckInOpen(true)}
+              scope={scope}
+              onEmptyAction={scope === "mine" ? () => setCheckInOpen(true) : undefined}
               onViewPhotos={scrollToSelectedPhotos}
               onPhotosLayout={(y) => {
                 selectedPhotosY.current = y;
@@ -176,7 +190,10 @@ export default function MapScreen() {
             />
           </View>
 
-          <SectionTitle title="Visited Places" detail="Tap a row to focus the atlas." />
+          <SectionTitle
+            title={scope === "mine" || !friendsFeatureEnabled ? "Visited Places" : "Friend Last Logs"}
+            detail={scope === "mine" || !friendsFeatureEnabled ? "Tap a row to focus the atlas." : "One latest beer location per friend."}
+          />
           {filteredPins.map((pin) => (
             <Pressable
               key={pin.id}
@@ -207,10 +224,12 @@ export default function MapScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 16 }}>{pin.title}</Text>
                   <Text style={{ color: theme.colors.muted, marginTop: 3 }}>
-                    {pin.beerCount} beers • {pin.photos.length} photos
+                    {scope === "mine"
+                      ? `${pin.beerCount} beers • ${pin.photos.length} photos`
+                      : `${pin.visitors.join(", ")} • ${pin.beerCount} latest beers`}
                   </Text>
                 </View>
-                <Text style={{ color: theme.colors.neon, fontWeight: "900" }}>{pin.visitCount}x</Text>
+                <Text style={{ color: theme.colors.neon, fontWeight: "900" }}>{scope === "mine" ? `${pin.visitCount}x` : "Latest"}</Text>
               </View>
             </Pressable>
           ))}
@@ -280,6 +299,18 @@ function buildPlacePins(checkIns: BeerCheckIn[]) {
   return pins.sort((a, b) => new Date(b.latestAt).getTime() - new Date(a.latestAt).getTime());
 }
 
+function latestFriendCheckIns(checkIns: BeerCheckIn[], friendIds: Set<string>) {
+  const latestByFriend = new Map<string, BeerCheckIn>();
+  checkIns.forEach((checkIn) => {
+    if (!friendIds.has(checkIn.userId)) return;
+    const existing = latestByFriend.get(checkIn.userId);
+    if (!existing || new Date(checkIn.createdAt).getTime() > new Date(existing.createdAt).getTime()) {
+      latestByFriend.set(checkIn.userId, checkIn);
+    }
+  });
+  return Array.from(latestByFriend.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
 function ScopeButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
     <Pressable
@@ -345,11 +376,13 @@ function toRadians(value: number) {
 
 function LocationSummary({
   pin,
+  scope,
   onEmptyAction,
   onViewPhotos,
   onPhotosLayout
 }: {
   pin?: Pin | null;
+  scope: "mine" | "friends";
   onEmptyAction?: () => void;
   onViewPhotos?: () => void;
   onPhotosLayout?: (y: number) => void;
@@ -360,8 +393,10 @@ function LocationSummary({
     return (
       <View>
         <Text style={{ color: theme.colors.text, fontWeight: "900" }}>No locations yet</Text>
-        <Text style={{ color: theme.colors.muted, marginTop: 4 }}>Check in a beer to add your first map stamp.</Text>
-        {onEmptyAction ? (
+        <Text style={{ color: theme.colors.muted, marginTop: 4 }}>
+          {scope === "mine" ? "Check in a beer to add your first map stamp." : "Add friends to see their latest drinking locations here."}
+        </Text>
+        {onEmptyAction && scope === "mine" ? (
           <Pressable
             onPress={onEmptyAction}
             style={{
@@ -382,7 +417,9 @@ function LocationSummary({
 
   return (
     <View>
-      <Text style={{ color: theme.colors.gold, fontWeight: "900", letterSpacing: 1, fontSize: 12 }}>SELECTED STAMP</Text>
+      <Text style={{ color: theme.colors.gold, fontWeight: "900", letterSpacing: 1, fontSize: 12 }}>
+        {scope === "mine" ? "SELECTED STAMP" : "FRIEND LAST LOG"}
+      </Text>
       <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10, marginTop: 5 }}>
         <Text style={{ color: theme.colors.text, fontSize: 19, fontWeight: "900", flex: 1 }}>{pin.title}</Text>
         {pin.photos.length ? (
@@ -412,12 +449,12 @@ function LocationSummary({
         {pin.hasCoordinates ? `GPS clustered within ${SAME_PLACE_METERS}m` : "City-based location"}
       </Text>
       <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
-        <Mini label="Visits" value={pin.visitCount} />
+        <Mini label={scope === "mine" ? "Visits" : "Friends"} value={scope === "mine" ? pin.visitCount : pin.visitors.length} />
         <Mini label="Beers" value={pin.beerCount} />
         <Mini label="Photos" value={pin.photos.length} />
       </View>
       <Text style={{ color: theme.colors.dim, marginTop: 12, fontSize: 12, lineHeight: 18 }}>
-        This pin combines logs from the same physical place.
+        {scope === "mine" ? "This pin combines logs from the same physical place." : "Friend mode only shows each friend's most recent shared beer location."}
       </Text>
       <View
         onLayout={(event) => {

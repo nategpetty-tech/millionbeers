@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { useMemo } from "react";
+import { friendsFeatureEnabled } from "@/config/features";
 import { usePassport } from "@/store/passportStore";
 import { theme } from "@/theme";
 
@@ -25,7 +26,7 @@ export default function TabsLayout() {
     [groups, user.id]
   );
   const incomingFriendRequests = useMemo(
-    () => friendRequests.filter((request) => request.status === "pending" && request.direction === "incoming").length,
+    () => friendsFeatureEnabled ? friendRequests.filter((request) => request.status === "pending" && request.direction === "incoming").length : 0,
     [friendRequests]
   );
 
@@ -71,6 +72,7 @@ export default function TabsLayout() {
         name="friends"
         options={{
           title: "Friends",
+          href: friendsFeatureEnabled ? undefined : null,
           tabBarBadge: incomingFriendRequests || undefined,
           tabBarBadgeStyle: {
             backgroundColor: theme.colors.gold,
