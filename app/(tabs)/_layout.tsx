@@ -1,6 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { Pressable, View } from "react-native";
+import { CheckInModal } from "@/components/CheckInModal";
 import { friendsFeatureEnabled } from "@/config/features";
 import { usePassport } from "@/store/passportStore";
 import { theme } from "@/theme";
@@ -8,7 +10,7 @@ import { theme } from "@/theme";
 type IconName = keyof typeof Ionicons.glyphMap;
 
 const icons: Record<string, IconName> = {
-  journey: "trail-sign-outline",
+  journey: "home-outline",
   map: "map-outline",
   groups: "people-outline",
   friends: "person-add-outline",
@@ -16,6 +18,7 @@ const icons: Record<string, IconName> = {
 };
 
 export default function TabsLayout() {
+  const [checkInOpen, setCheckInOpen] = useState(false);
   const { groups, friendRequests, user } = usePassport();
   const pendingJoinRequests = useMemo(
     () =>
@@ -31,63 +34,108 @@ export default function TabsLayout() {
   );
 
   return (
-    <Tabs
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarActiveTintColor: theme.colors.neon,
-        tabBarInactiveTintColor: theme.colors.muted,
-        tabBarStyle: {
-          backgroundColor: theme.colors.surface,
-          borderTopColor: theme.colors.border,
-          height: 82,
-          paddingTop: 8,
-          paddingBottom: 14
-        },
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: "700"
-        },
-        tabBarIcon: ({ color, size }) => (
-          <Ionicons name={icons[route.name] ?? "ellipse-outline"} color={color} size={size} />
-        )
-      })}
-    >
-      <Tabs.Screen name="journey" options={{ title: "Journey" }} />
-      <Tabs.Screen name="map" options={{ title: "Map" }} />
-      <Tabs.Screen
-        name="groups"
-        options={{
-          title: "Groups",
-          tabBarBadge: pendingJoinRequests || undefined,
-          tabBarBadgeStyle: {
-            backgroundColor: theme.colors.gold,
-            color: theme.colors.ink,
-            fontWeight: "900"
-          }
-        }}
-      />
-      <Tabs.Screen name="groups/join" options={{ href: null }} />
-      <Tabs.Screen name="challenges" options={{ href: null }} />
-      <Tabs.Screen
-        name="friends"
-        options={{
-          title: "Friends",
-          href: friendsFeatureEnabled ? undefined : null,
-          tabBarBadge: incomingFriendRequests || undefined,
-          tabBarBadgeStyle: {
-            backgroundColor: theme.colors.gold,
-            color: theme.colors.ink,
-            fontWeight: "900"
-          }
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: "Profile"
-        }}
-      />
-      <Tabs.Screen name="passport" options={{ href: null }} />
-    </Tabs>
+    <>
+      <Tabs
+        screenOptions={({ route }) => ({
+          headerShown: false,
+          tabBarActiveTintColor: theme.colors.neon,
+          tabBarInactiveTintColor: theme.colors.muted,
+          tabBarStyle: {
+            backgroundColor: theme.colors.surface,
+            borderTopColor: theme.colors.border,
+            height: 82,
+            paddingTop: 8,
+            paddingBottom: 14
+          },
+          tabBarLabelStyle: {
+            fontSize: 11,
+            fontWeight: "700"
+          },
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name={icons[route.name] ?? "ellipse-outline"} color={color} size={size} />
+          )
+        })}
+      >
+        <Tabs.Screen name="journey" options={{ title: "Home" }} />
+        <Tabs.Screen name="map" options={{ title: "Map" }} />
+        <Tabs.Screen
+          name="add"
+          options={{
+            title: "",
+            tabBarButton: (props) => (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Log a beer"
+                onPress={() => setCheckInOpen(true)}
+                style={({ pressed }) => [
+                  props.style,
+                  {
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transform: [{ scale: pressed ? 0.96 : 1 }]
+                  }
+                ]}
+              >
+                <View
+                  style={{
+                    marginTop: -28,
+                    width: 64,
+                    height: 64,
+                    borderRadius: 32,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: theme.colors.neon,
+                    borderWidth: 4,
+                    borderColor: theme.colors.background,
+                    shadowColor: "#000",
+                    shadowOpacity: 0.34,
+                    shadowRadius: 12,
+                    shadowOffset: { width: 0, height: 8 },
+                    elevation: 8
+                  }}
+                >
+                  <Ionicons name="add" color={theme.colors.ink} size={34} />
+                </View>
+              </Pressable>
+            )
+          }}
+        />
+        <Tabs.Screen
+          name="groups"
+          options={{
+            title: "Groups",
+            tabBarBadge: pendingJoinRequests || undefined,
+            tabBarBadgeStyle: {
+              backgroundColor: theme.colors.gold,
+              color: theme.colors.ink,
+              fontWeight: "900"
+            }
+          }}
+        />
+        <Tabs.Screen name="groups/join" options={{ href: null }} />
+        <Tabs.Screen name="challenges" options={{ href: null }} />
+        <Tabs.Screen
+          name="friends"
+          options={{
+            title: "Friends",
+            href: friendsFeatureEnabled ? undefined : null,
+            tabBarBadge: incomingFriendRequests || undefined,
+            tabBarBadgeStyle: {
+              backgroundColor: theme.colors.gold,
+              color: theme.colors.ink,
+              fontWeight: "900"
+            }
+          }}
+        />
+        <Tabs.Screen
+          name="profile"
+          options={{
+            title: "Profile"
+          }}
+        />
+        <Tabs.Screen name="passport" options={{ href: null }} />
+      </Tabs>
+      <CheckInModal visible={checkInOpen} onClose={() => setCheckInOpen(false)} />
+    </>
   );
 }
