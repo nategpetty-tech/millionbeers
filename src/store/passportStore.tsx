@@ -7,6 +7,7 @@ import {
   createRemoteCheckInFromLocal,
   createRemoteGroup,
   deleteRemoteCheckIn,
+  fetchRemoteGlobalCount,
   fetchRemoteSnapshot,
   findRemoteGroupByInviteCode,
   rejectRemoteFriendRequest,
@@ -365,6 +366,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
     if (saved) {
       const normalized = normalizeStoredState(JSON.parse(saved));
       const remote = await fetchRemoteSnapshot(normalized.user);
+      const fallbackGlobalCount = remote ? null : await fetchRemoteGlobalCount();
       const nextState = remote
         ? normalizeStoredState({
             ...normalized,
@@ -374,13 +376,17 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
             friendRequests: remote.friendRequests,
             globalCount: remote.globalCount
           })
-        : normalized;
+        : normalizeStoredState({
+            ...normalized,
+            globalCount: fallbackGlobalCount ?? normalized.globalCount
+          });
       setState(nextState);
       await persist(nextState);
       return;
     }
     const seeded = createSeedState(authenticatedUser);
     const remote = await fetchRemoteSnapshot(seeded.user);
+    const fallbackGlobalCount = remote ? null : await fetchRemoteGlobalCount();
     const nextState = remote
       ? normalizeStoredState({
           ...seeded,
@@ -390,7 +396,10 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
           friendRequests: remote.friendRequests,
           globalCount: remote.globalCount
         })
-      : seeded;
+      : normalizeStoredState({
+          ...seeded,
+          globalCount: fallbackGlobalCount ?? seeded.globalCount
+        });
     setState(nextState);
     await persist(nextState);
   }, [authenticatedUser, persist, storageKey]);

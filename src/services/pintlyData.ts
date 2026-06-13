@@ -128,6 +128,13 @@ export function isRemoteDataConfigured() {
   return Boolean(supabase);
 }
 
+export async function fetchRemoteGlobalCount(): Promise<number | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.rpc("get_global_beer_count");
+  if (error) return null;
+  return Number(data ?? 0);
+}
+
 export async function upsertProfile(user: User) {
   if (!supabase) return;
   await supabase.from("profiles").upsert({
