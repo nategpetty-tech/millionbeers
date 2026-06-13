@@ -378,7 +378,7 @@ export async function createRemoteCheckInFromLocal(localCheckIn: BeerCheckIn, gr
       beer_name: localCheckIn.beerName,
       brewery: localCheckIn.brewery,
       style: localCheckIn.style,
-      quantity: localCheckIn.quantity,
+      quantity: 1,
       abv: localCheckIn.abv ?? null,
       rating: localCheckIn.rating ?? null,
       city: localCheckIn.location.city,
@@ -413,7 +413,7 @@ export async function updateRemoteCheckIn(checkInId: string, input: UpdateCheckI
   const { error } = await supabase
     .from("check_ins")
     .update({
-      quantity: Math.max(1, Math.min(24, Math.floor(input.quantity))),
+      quantity: 1,
       note: input.note?.trim() || null,
       count_source: "manual"
     })

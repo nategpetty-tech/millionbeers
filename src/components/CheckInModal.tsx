@@ -3,12 +3,10 @@ import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Image, Keyboard, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { BeerScanResult, isBeerPhotoScannerConfigured, scanBeerPhoto } from "@/services/beerPhotoScanner";
 import { compressBeerPhoto } from "@/services/photoCompression";
 import { isPhotoStorageConfigured } from "@/services/photoStorage";
 import { enqueuePhotoUpload } from "@/services/photoUploadQueue";
 import { usePassport } from "@/store/passportStore";
-import type { BeerCheckIn } from "@/types";
 import { theme } from "@/theme";
 
 type Props = {
@@ -19,12 +17,9 @@ type Props = {
 
 const emptyGroupIds: string[] = [];
 const previewHeight = 210;
-const highCountThreshold = 6;
-const highCountWindowMs = 24 * 60 * 60 * 1000;
 
 export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds }: Props) {
-  const { checkInBeer, checkIns, updateCheckInScan, groups, user } = usePassport();
-  const [quantity, setQuantity] = useState(1);
+  const { checkInBeer, groups, user } = usePassport();
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
   const [country, setCountry] = useState("");
@@ -64,7 +59,6 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
   }, [visible]);
 
   function reset() {
-    setQuantity(1);
     setCity("");
     setState("");
     setCountry("");
@@ -199,10 +193,9 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
 
     const localPhotoUri = photoUri;
     const stampCity = city.trim() || "Unknown";
-    const shouldRunTrustScan = shouldScanForHighCountStreak(checkIns, user.id, quantity);
     const result = checkInBeer({
       beerName: "Beer log",
-      quantity,
+      quantity: 1,
       brewery: stampCity === "Unknown" ? "Pintly log" : `Pintly log - ${stampCity}`,
       city: stampCity,
       state,
@@ -216,9 +209,6 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
       longitude: coordinates?.longitude
     });
     void enqueuePhotoUpload({ checkInId: result.checkIn.id, localUri: localPhotoUri, userId: user.id });
-    if (shouldRunTrustScan) {
-      void runQuietTrustScan(result.checkIn.id, localPhotoUri, quantity, updateCheckInScan);
-    }
     if (result.completedChallenges.length) {
       const challengeNames = result.completedChallenges.map((challenge) => challenge.title).join(", ");
       const badgeNames = result.unlockedBadges.map((badge) => badge.title).join(", ");
@@ -227,7 +217,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
         `${challengeNames}${badgeNames ? `\n\nBadge unlocked: ${badgeNames}` : ""}`
       );
     } else {
-      Alert.alert("Stamped", `${quantity} beer${quantity === 1 ? "" : "s"} added to Pintly. The photo will finish syncing in the background.`);
+      Alert.alert("Stamped", "1 beer added to Pintly. The photo will finish syncing in the background.");
     }
     closeModal();
   }
@@ -313,20 +303,13 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
               borderWidth: 1,
               borderColor: theme.colors.border,
               padding: 14,
-              gap: 12
+              gap: 6
             }}
           >
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 16 }}>Beers in photo</Text>
-                <Text style={{ color: theme.colors.muted, marginTop: 3 }}>Set the count your group should get credit for.</Text>
-              </View>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <QuantityButton icon="remove" disabled={quantity <= 1} onPress={() => setQuantity((current) => Math.max(1, current - 1))} />
-                <Text style={{ color: theme.colors.neon, fontWeight: "900", fontSize: 24, minWidth: 34, textAlign: "center" }}>{quantity}</Text>
-                <QuantityButton icon="add" disabled={quantity >= 24} onPress={() => setQuantity((current) => Math.min(24, current + 1))} />
-              </View>
-            </View>
+            <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 16 }}>One beer per log</Text>
+            <Text style={{ color: theme.colors.muted, lineHeight: 20 }}>
+              Each photo adds 1 beer to your groups and the global count. Log another photo when you want to count another beer.
+            </Text>
           </View>
           <Field label="Note" value={note} onChangeText={setNote} placeholder="Optional note" multiline />
           <View
@@ -411,27 +394,6 @@ type FieldProps = {
   multiline?: boolean;
 };
 
-function QuantityButton({ icon, disabled, onPress }: { icon: "add" | "remove"; disabled: boolean; onPress: () => void }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      style={{
-        width: 38,
-        height: 38,
-        borderRadius: 19,
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: disabled ? theme.colors.cardSoft : theme.colors.neonSoft,
-        borderWidth: 1,
-        borderColor: disabled ? theme.colors.border : theme.colors.neon
-      }}
-    >
-      <Ionicons name={icon} color={disabled ? theme.colors.dim : theme.colors.neon} size={22} />
-    </Pressable>
-  );
-}
-
 function photoStatusCopy(status: "idle" | "uploading" | "uploaded" | "local" | "failed", cameraOpening = false) {
   if (cameraOpening) return "Opening camera";
   if (status === "uploading") return "Uploading to Pintly storage";
@@ -439,36 +401,6 @@ function photoStatusCopy(status: "idle" | "uploading" | "uploaded" | "local" | "
   if (status === "failed") return "Photo kept locally after upload failed";
   if (status === "local") return "Photo captured locally";
   return "Photo captured";
-}
-
-function shouldScanForHighCountStreak(checkIns: BeerCheckIn[], userId: string, quantity: number) {
-  if (quantity < highCountThreshold || !isBeerPhotoScannerConfigured()) return false;
-  const cutoff = Date.now() - highCountWindowMs;
-  const recentOwnLogs = checkIns
-    .filter((item) => item.userId === userId)
-    .filter((item) => new Date(item.createdAt).getTime() >= cutoff)
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  const previousTwoHighCount = recentOwnLogs.slice(0, 2).every((item) => item.quantity >= highCountThreshold);
-  return recentOwnLogs.length >= 2 && previousTwoHighCount;
-}
-
-async function runQuietTrustScan(
-  checkInId: string,
-  photoUri: string,
-  claimedCount: number,
-  updateCheckInScan: (checkInId: string, input: { scannedBeerCount?: number; scanConfidence?: number; scanStatus?: BeerScanResult["status"]; scanBoxes?: BeerScanResult["boxes"] }) => void
-) {
-  try {
-    const scan = await scanBeerPhoto(photoUri, claimedCount);
-    updateCheckInScan(checkInId, {
-      scannedBeerCount: scan.detectedCount,
-      scanConfidence: scan.confidence,
-      scanStatus: scan.status,
-      scanBoxes: scan.boxes
-    });
-  } catch {
-    // Quiet trust scans should never interrupt normal logging.
-  }
 }
 
 function Field({ label, value, placeholder, onChangeText, keyboardType = "default", multiline }: FieldProps) {

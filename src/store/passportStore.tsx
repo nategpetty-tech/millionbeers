@@ -724,7 +724,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
 
   const checkInBeer = useCallback(
     (input: CheckInInput) => {
-      const quantity = Math.max(1, Math.min(24, Math.floor(input.quantity ?? 1)));
+      const quantity = 1;
       const checkIn: BeerCheckIn = {
         id: makeUuid(),
         userId: state.user.id,
@@ -809,7 +809,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       setState((current) => {
         const target = current.checkIns.find((checkIn) => checkIn.id === checkInId);
         if (!target || target.userId !== current.user.id) return current;
-        const quantity = Math.max(1, Math.min(24, Math.floor(input.quantity)));
+        const quantity = 1;
         const nextCheckIns = current.checkIns.map((checkIn) =>
           checkIn.id === checkInId
             ? {
