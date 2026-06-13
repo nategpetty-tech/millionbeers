@@ -181,14 +181,26 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
     const typedFriends = (friendRows ?? []) as FriendRow[];
     const typedFriendRequests = (friendRequestRows ?? []) as FriendRequestRow[];
     const accessibleGroupIds = new Set(typedMemberships.map((row) => row.group_id));
-    const { data: checkInRows, error: checkInError } = await supabase
+    const richCheckInQuery = supabase
       .from("check_ins")
       .select(
         "*,profiles!check_ins_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path),check_in_groups(group_id),check_in_reactions(user_id,profiles!check_in_reactions_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path))"
       )
       .order("created_at", { ascending: false });
+    let { data: checkInRows, error: checkInError } = await richCheckInQuery;
 
     if (checkInError) {
+      console.warn("Falling back to reaction ids while loading check-ins", checkInError.message);
+      const fallbackResult = await supabase
+        .from("check_ins")
+        .select("*,profiles!check_ins_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path),check_in_groups(group_id),check_in_reactions(user_id)")
+        .order("created_at", { ascending: false });
+      checkInRows = fallbackResult.data;
+      checkInError = fallbackResult.error;
+    }
+
+    if (checkInError) {
+      console.warn("Could not load remote check-ins", checkInError.message);
       return null;
     }
 
