@@ -85,6 +85,7 @@ type CheckInGroupRow = {
 
 type ReactionRow = {
   user_id: string;
+  profiles?: ProfileRow | ProfileRow[] | null;
 };
 
 type CheckInRow = {
@@ -182,7 +183,9 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
     const accessibleGroupIds = new Set(typedMemberships.map((row) => row.group_id));
     const { data: checkInRows, error: checkInError } = await supabase
       .from("check_ins")
-      .select("*,profiles!check_ins_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path),check_in_groups(group_id),check_in_reactions(user_id)")
+      .select(
+        "*,profiles!check_ins_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path),check_in_groups(group_id),check_in_reactions(user_id,profiles!check_in_reactions_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path))"
+      )
       .order("created_at", { ascending: false });
 
     if (checkInError) {
@@ -439,7 +442,9 @@ export async function toggleRemoteReaction(checkInId: string, userId: string, re
     if (error) throw error;
     return;
   }
-  const { error } = await supabase.from("check_in_reactions").insert({ check_in_id: checkInId, user_id: userId });
+  const { error } = await supabase
+    .from("check_in_reactions")
+    .upsert({ check_in_id: checkInId, user_id: userId }, { onConflict: "check_in_id,user_id", ignoreDuplicates: true });
   if (error) throw error;
 }
 
@@ -504,7 +509,17 @@ function mapJoinRequestRow(row: JoinRequestRow): GroupJoinRequest {
 }
 
 async function mapCheckInRow(row: CheckInRow): Promise<BeerCheckIn> {
-  const reactedBy = (row.check_in_reactions ?? []).map((reaction) => reaction.user_id);
+  const reactionUsers = (row.check_in_reactions ?? []).map((reaction) => {
+    const reactionProfile = normalizeProfile(reaction.profiles);
+    const name = reactionProfile?.display_name ?? "Pintly User";
+    return {
+      id: reaction.user_id,
+      name,
+      avatar: reactionProfile?.avatar ?? initialsFor(name),
+      avatarUrl: reactionProfile?.avatar_url ?? undefined
+    };
+  });
+  const reactedBy = reactionUsers.map((reaction) => reaction.id);
   const profile = normalizeProfile(row.profiles);
   const signedPhotoUrl = row.photo_storage_path ? await createSignedPhotoUrl(row.photo_storage_path).catch(() => undefined) : undefined;
   return {
@@ -539,7 +554,8 @@ async function mapCheckInRow(row: CheckInRow): Promise<BeerCheckIn> {
     groupIds: (row.check_in_groups ?? []).map((item) => item.group_id),
     createdAt: row.created_at,
     reactions: reactedBy.length,
-    reactedBy
+    reactedBy,
+    reactionUsers
   };
 }
 

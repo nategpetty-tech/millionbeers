@@ -296,7 +296,7 @@ export default function GroupsScreen() {
                         }}
                       >
                         <Text style={{ color: pending ? theme.colors.dim : theme.colors.ink, fontWeight: "900" }}>
-                          {pending ? "Pending" : source === "invite" ? "Use Invite" : "Request"}
+                          {pending ? "Pending" : "Request to Join"}
                         </Text>
                       </Pressable>
                     </View>

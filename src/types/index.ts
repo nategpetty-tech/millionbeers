@@ -18,6 +18,13 @@ export type Location = {
   longitude?: number;
 };
 
+export type ReactionUser = {
+  id: string;
+  name: string;
+  avatar: string;
+  avatarUrl?: string;
+};
+
 export type Brewery = {
   id: string;
   name: string;
@@ -141,6 +148,7 @@ export type BeerCheckIn = {
   createdAt: string;
   reactions: number;
   reactedBy: string[];
+  reactionUsers?: ReactionUser[];
 };
 
 export type ActivityItem = BeerCheckIn & {

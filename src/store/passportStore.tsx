@@ -749,7 +749,8 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         groupIds: input.groupIds,
         createdAt: new Date().toISOString(),
         reactions: 0,
-        reactedBy: []
+        reactedBy: [],
+        reactionUsers: []
       };
 
       const projectedCheckIns = [checkIn, ...state.checkIns];
@@ -992,12 +993,24 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         const nextCheckIns = current.checkIns.map((checkIn) => {
           if (checkIn.id !== checkInId) return checkIn;
           const alreadyReacted = checkIn.reactedBy.includes(current.user.id);
+          const currentReactionUser = {
+            id: current.user.id,
+            name: current.user.name || "You",
+            avatar: current.user.avatar,
+            avatarUrl: current.user.avatarUrl
+          };
+          const existingReactionUsers = checkIn.reactionUsers ?? checkIn.reactedBy.map((id) => ({ id, name: "Pintly User", avatar: "PU" }));
           return {
             ...checkIn,
             reactions: alreadyReacted ? Math.max(0, checkIn.reactions - 1) : checkIn.reactions + 1,
             reactedBy: alreadyReacted
               ? checkIn.reactedBy.filter((id) => id !== current.user.id)
-              : [...checkIn.reactedBy, current.user.id]
+              : [...checkIn.reactedBy, current.user.id],
+            reactionUsers: alreadyReacted
+              ? existingReactionUsers.filter((reactionUser) => reactionUser.id !== current.user.id)
+              : existingReactionUsers.some((reactionUser) => reactionUser.id === current.user.id)
+                ? existingReactionUsers
+                : [...existingReactionUsers, currentReactionUser]
           };
         });
         const next = { ...current, checkIns: nextCheckIns };

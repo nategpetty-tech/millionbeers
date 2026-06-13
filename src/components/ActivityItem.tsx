@@ -1,9 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Image } from "react-native";
-import { Modal, Pressable, Text, TextInput, View } from "react-native";
+import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Avatar } from "@/components/Avatar";
-import { BeerCheckIn } from "@/types";
+import { BeerCheckIn, ReactionUser } from "@/types";
 import { theme } from "@/theme";
 import { broadPlaceLabel, timeAgo } from "@/utils/format";
 
@@ -28,7 +28,11 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
   const [imageFailed, setImageFailed] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [likersOpen, setLikersOpen] = useState(false);
   const [photoSize, setPhotoSize] = useState<{ width: number; height: number } | undefined>();
+  const lastPhotoTap = useRef(0);
+  const singleTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reactionUsers = reactionUsersFor(item, currentUserId);
 
   useEffect(() => {
     setImageFailed(false);
@@ -40,6 +44,13 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
         () => setPhotoSize(undefined)
       );
     }
+
+    return () => {
+      if (singleTapTimer.current) {
+        clearTimeout(singleTapTimer.current);
+        singleTapTimer.current = null;
+      }
+    };
   }, [item.id, photoSource]);
 
   function confirmDelete() {
@@ -47,6 +58,31 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
       { text: "Cancel", style: "cancel" },
       { text: "Delete", style: "destructive", onPress: () => onDelete?.(item.id) }
     ]);
+  }
+
+  function handlePhotoPress() {
+    if (!onReact) {
+      setPhotoOpen(true);
+      return;
+    }
+
+    const now = Date.now();
+    if (now - lastPhotoTap.current < 260) {
+      if (singleTapTimer.current) {
+        clearTimeout(singleTapTimer.current);
+        singleTapTimer.current = null;
+      }
+      lastPhotoTap.current = 0;
+      onReact(item.id);
+      return;
+    }
+
+    lastPhotoTap.current = now;
+    singleTapTimer.current = setTimeout(() => {
+      setPhotoOpen(true);
+      singleTapTimer.current = null;
+      lastPhotoTap.current = 0;
+    }, 260);
   }
 
   return (
@@ -72,7 +108,7 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
           <Text style={{ color: theme.colors.dim, marginTop: 2, fontSize: 12 }}>{timeAgo(item.createdAt)}</Text>
         </View>
         {variant === "compact" ? (
-          <PhotoThumb photoSource={photoSource} imageFailed={imageFailed} onPress={() => setPhotoOpen(true)} onError={() => setImageFailed(true)} />
+          <PhotoThumb photoSource={photoSource} imageFailed={imageFailed} onPress={handlePhotoPress} onError={() => setImageFailed(true)} />
         ) : null}
         <View style={{ alignItems: "center", gap: 8 }}>
           {canDelete && onEdit ? (
@@ -93,7 +129,7 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
           photoSource={photoSource}
           photoSize={photoSize}
           imageFailed={imageFailed}
-          onPress={() => setPhotoOpen(true)}
+          onPress={handlePhotoPress}
           onError={() => setImageFailed(true)}
         />
       ) : null}
@@ -171,23 +207,25 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
           <Text style={{ color: theme.colors.dim, fontSize: 12 }}>{placeLabel}</Text>
           {showBrewery ? <Text style={{ color: theme.colors.dim, fontSize: 11, marginTop: 2 }}>{item.brewery}</Text> : null}
         </View>
-        <Pressable
-          onPress={() => onReact?.(item.id)}
+        <View
           style={{
             flexDirection: "row",
             alignItems: "center",
             gap: 6,
-            paddingHorizontal: 10,
-            paddingVertical: 6,
             borderRadius: theme.radius.pill,
             backgroundColor: reacted ? theme.colors.neonSoft : theme.colors.cardSoft
           }}
         >
-          <Ionicons name={reacted ? "heart" : "heart-outline"} color={reacted ? theme.colors.neon : theme.colors.muted} size={16} />
-          <Text style={{ color: reacted ? theme.colors.neon : theme.colors.muted, fontWeight: "800" }}>{item.reactions}</Text>
-        </Pressable>
+          <Pressable onPress={() => onReact?.(item.id)} hitSlop={8} style={{ paddingLeft: 10, paddingVertical: 6 }}>
+            <Ionicons name={reacted ? "heart" : "heart-outline"} color={reacted ? theme.colors.neon : theme.colors.muted} size={16} />
+          </Pressable>
+          <Pressable onPress={() => setLikersOpen(true)} hitSlop={8} style={{ paddingRight: 10, paddingVertical: 6, minWidth: 22 }}>
+            <Text style={{ color: reacted ? theme.colors.neon : theme.colors.muted, fontWeight: "800" }}>{item.reactions}</Text>
+          </Pressable>
+        </View>
       </View>
       <PhotoViewer visible={photoOpen && Boolean(photoSource) && !imageFailed} item={item} photoSource={photoSource} photoSize={photoSize} onClose={() => setPhotoOpen(false)} />
+      <LikersModal visible={likersOpen} reactionUsers={reactionUsers} onClose={() => setLikersOpen(false)} />
       <EditCheckInModal
         visible={editOpen}
         item={item}
@@ -211,6 +249,78 @@ function remoteSyncCopy(status: NonNullable<BeerCheckIn["remoteSyncStatus"]>) {
   if (status === "syncing") return "Stamp syncing";
   if (status === "failed") return "Stamp retry pending";
   return "Stamp queued";
+}
+
+function reactionUsersFor(item: BeerCheckIn, currentUserId: string): ReactionUser[] {
+  const usersById = new Map<string, ReactionUser>();
+  (item.reactionUsers ?? []).forEach((reactionUser) => {
+    usersById.set(reactionUser.id, reactionUser);
+  });
+  item.reactedBy.forEach((id) => {
+    if (!usersById.has(id)) {
+      usersById.set(id, {
+        id,
+        name: id === currentUserId ? "You" : "Pintly user",
+        avatar: id === currentUserId ? "YO" : "PU"
+      });
+    }
+  });
+  return Array.from(usersById.values());
+}
+
+function LikersModal({ visible, reactionUsers, onClose }: { visible: boolean; reactionUsers: ReactionUser[]; onClose: () => void }) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable
+        onPress={onClose}
+        style={{
+          flex: 1,
+          backgroundColor: "rgba(0,0,0,0.78)",
+          justifyContent: "flex-end"
+        }}
+      >
+        <Pressable
+          onPress={(event) => event.stopPropagation()}
+          style={{
+            backgroundColor: theme.colors.card,
+            borderTopLeftRadius: 28,
+            borderTopRightRadius: 28,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            padding: 20,
+            maxHeight: "62%"
+          }}
+        >
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <View>
+              <Text style={{ color: theme.colors.gold, fontWeight: "900", fontSize: 12, letterSpacing: 1.4 }}>LIKED BY</Text>
+              <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 24, fontFamily: "Georgia", marginTop: 2 }}>
+                {reactionUsers.length || "No"} {reactionUsers.length === 1 ? "person" : "people"}
+              </Text>
+            </View>
+            <Pressable onPress={onClose} hitSlop={8}>
+              <Ionicons name="close" color={theme.colors.text} size={26} />
+            </Pressable>
+          </View>
+
+          {reactionUsers.length ? (
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={{ gap: 10, paddingBottom: 8 }}>
+                {reactionUsers.map((reactionUser) => (
+                  <View key={reactionUser.id} style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                    <Avatar label={reactionUser.avatar} uri={reactionUser.avatarUrl} size={38} />
+                    <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 16 }}>{reactionUser.name}</Text>
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+          ) : (
+            <Text style={{ color: theme.colors.muted, lineHeight: 20 }}>No likes yet.</Text>
+          )}
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
 }
 
 function PhotoThumb({ photoSource, imageFailed, onPress, onError }: { photoSource?: string; imageFailed: boolean; onPress: () => void; onError: () => void }) {
@@ -432,11 +542,12 @@ function PhotoViewer({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "center", padding: 16 }}>
+      <Pressable onPress={onClose} style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "center", padding: 16 }}>
         <Pressable onPress={onClose} style={{ position: "absolute", top: 54, right: 22, zIndex: 2, padding: 8 }}>
           <Ionicons name="close-circle" color={theme.colors.text} size={34} />
         </Pressable>
-        <View
+        <Pressable
+          onPress={(event) => event.stopPropagation()}
           onLayout={(event) => {
             const { width, height } = event.nativeEvent.layout;
             setPreviewSize({ width, height });
@@ -444,8 +555,8 @@ function PhotoViewer({
           style={{ width: "100%", aspectRatio: 3 / 4, borderRadius: theme.radius.lg, overflow: "hidden" }}
         >
           <Image source={{ uri: photoSource }} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
-    </View>
-      </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
