@@ -189,36 +189,29 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
       supabase.rpc("get_global_beer_count")
     ]);
 
-    if (groupError || membershipError || requestError || friendError || friendRequestError) {
-      return null;
-    }
+    if (groupError) console.warn("Could not load remote groups", groupError.message);
+    if (membershipError) console.warn("Could not load remote memberships", membershipError.message);
+    if (requestError) console.warn("Could not load remote group requests", requestError.message);
+    if (friendError) console.warn("Could not load remote friends", friendError.message);
+    if (friendRequestError) console.warn("Could not load remote friend requests", friendRequestError.message);
 
-    const typedMemberships = (membershipRows ?? []) as MembershipRow[];
-    const typedRequests = (requestRows ?? []) as JoinRequestRow[];
-    const typedFriends = (friendRows ?? []) as FriendRow[];
-    const typedFriendRequests = (friendRequestRows ?? []) as FriendRequestRow[];
+    const typedMemberships = membershipError ? [] : ((membershipRows ?? []) as MembershipRow[]);
+    const typedRequests = requestError ? [] : ((requestRows ?? []) as JoinRequestRow[]);
+    const typedFriends = friendError ? [] : ((friendRows ?? []) as FriendRow[]);
+    const typedFriendRequests = friendRequestError ? [] : ((friendRequestRows ?? []) as FriendRequestRow[]);
     const accessibleGroupIds = new Set(typedMemberships.map((row) => row.group_id));
-    const richCheckInQuery = supabase
-      .from("check_ins")
-      .select(
-        "*,profiles!check_ins_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path),check_in_groups(group_id),check_in_reactions(user_id,profiles!check_in_reactions_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path))"
-      )
-      .order("created_at", { ascending: false });
-    let { data: checkInRows, error: checkInError } = await richCheckInQuery;
-
-    if (checkInError) {
-      console.warn("Falling back to reaction ids while loading check-ins", checkInError.message);
-      const fallbackResult = await supabase
-        .from("check_ins")
-        .select("*,profiles!check_ins_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path),check_in_groups(group_id),check_in_reactions(user_id)")
-        .order("created_at", { ascending: false });
-      checkInRows = fallbackResult.data;
-      checkInError = fallbackResult.error;
-    }
+    let { data: checkInRows, error: checkInError } = await fetchRemoteCheckInRows();
 
     if (checkInError) {
       console.warn("Could not load remote check-ins", checkInError.message);
-      return null;
+      const ownResult = await fetchOwnRemoteCheckInRows(currentUser.id);
+      checkInRows = ownResult.data;
+      checkInError = ownResult.error;
+    }
+
+    if (checkInError) {
+      console.warn("Could not load own remote check-ins", checkInError.message);
+      checkInRows = [];
     }
 
     const mappedCheckIns = await Promise.all(((checkInRows ?? []) as CheckInRow[]).map(mapCheckInRow));
@@ -226,7 +219,7 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
       ? mappedCheckIns
       : mappedCheckIns.filter((checkIn) => checkIn.userId === currentUser.id || checkIn.groupIds.some((groupId) => accessibleGroupIds.has(groupId)));
     const groups = await Promise.all(
-      ((groupRows ?? []) as GroupRow[]).map((group) =>
+      (groupError ? [] : ((groupRows ?? []) as GroupRow[])).map((group) =>
         mapGroupRow(
         group,
         typedMemberships,
@@ -247,8 +240,36 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
       globalCount: Number(globalCount ?? checkIns.reduce((sum, item) => sum + item.quantity, 0))
     };
   } catch {
+    console.warn("Could not load remote snapshot");
     return null;
   }
+}
+
+async function fetchRemoteCheckInRows() {
+  if (!supabase) return { data: [], error: null };
+  const richResult = await supabase
+    .from("check_ins")
+    .select(
+      "*,profiles!check_ins_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path),check_in_groups(group_id),check_in_reactions(user_id,profiles!check_in_reactions_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path))"
+    )
+    .order("created_at", { ascending: false });
+
+  if (!richResult.error) return richResult;
+
+  console.warn("Falling back to reaction ids while loading check-ins", richResult.error.message);
+  return supabase
+    .from("check_ins")
+    .select("*,profiles!check_ins_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path),check_in_groups(group_id),check_in_reactions(user_id)")
+    .order("created_at", { ascending: false });
+}
+
+async function fetchOwnRemoteCheckInRows(userId: string) {
+  if (!supabase) return { data: [], error: null };
+  return supabase
+    .from("check_ins")
+    .select("*,profiles!check_ins_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path),check_in_groups(group_id)")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
 }
 
 async function fetchRemoteUserProfile(currentUser: User): Promise<User> {

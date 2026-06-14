@@ -10,7 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "bundleIdentifier": "com.nate.pintly",
-      "buildNumber": "7",
+      "buildNumber": "8",
       "supportsTablet": true,
       "infoPlist": {
         "NSCameraUsageDescription": "Pintly uses the camera to add a photo to your beer check-in stamp.",
