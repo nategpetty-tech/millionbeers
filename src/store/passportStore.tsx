@@ -124,6 +124,10 @@ function createSeedState(authenticatedUser?: AuthProfile): PassportState {
   };
 }
 
+function displayNameForAuthUser(authenticatedUser?: AuthProfile) {
+  return authenticatedUser?.displayName ?? authenticatedUser?.email?.split("@")[0] ?? "";
+}
+
 function countDistinct<T>(items: T[]) {
   return new Set(items.filter(Boolean)).size;
 }
@@ -377,6 +381,48 @@ async function loadStoredState(storageKey: string): Promise<PassportState | null
   }
 }
 
+function bindStoredStateToAuthenticatedUser(savedState: PassportState, authenticatedUser?: AuthProfile): PassportState {
+  if (!authenticatedUser) return savedState;
+  const previousUserId = savedState.user.id;
+  const displayName = savedState.user.name.trim() || displayNameForAuthUser(authenticatedUser);
+  const nextAvatar = savedState.user.avatar || initialsFor(displayName);
+
+  return {
+    ...savedState,
+    user: {
+      ...savedState.user,
+      id: authenticatedUser.id,
+      name: displayName,
+      avatar: nextAvatar,
+      hasOnboarded: savedState.user.hasOnboarded || Boolean(displayName.trim())
+    },
+    checkIns: savedState.checkIns.map((checkIn) =>
+      checkIn.userId === previousUserId
+        ? {
+            ...checkIn,
+            userId: authenticatedUser.id,
+            userName: displayName || checkIn.userName,
+            userAvatar: nextAvatar
+          }
+        : checkIn
+    ),
+    groups: savedState.groups.map((group) => ({
+      ...group,
+      founderId: group.founderId === previousUserId ? authenticatedUser.id : group.founderId,
+      members: group.members.map((member) =>
+        member.userId === previousUserId
+          ? {
+              ...member,
+              userId: authenticatedUser.id,
+              name: displayName || member.name,
+              avatar: nextAvatar
+            }
+          : member
+      )
+    }))
+  };
+}
+
 type PassportProviderProps = PropsWithChildren<{
   authenticatedUser?: AuthProfile;
 }>;
@@ -394,7 +440,8 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
   );
 
   const initializeSeedData = useCallback(async () => {
-    const normalized = await loadStoredState(storageKey);
+    const stored = await loadStoredState(storageKey);
+    const normalized = stored ? normalizeStoredState(bindStoredStateToAuthenticatedUser(stored, authenticatedUser)) : null;
     if (normalized) {
       const refreshedUser = await refreshUserAvatarUrl(normalized.user);
       const refreshed = normalizeStoredState({ ...normalized, user: refreshedUser });
