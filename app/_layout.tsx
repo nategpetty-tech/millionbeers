@@ -19,21 +19,28 @@ export default function RootLayout() {
 }
 
 function AuthenticatedApp() {
-  const { profile } = useAuth();
+  const { loading, profile } = useAuth();
   const segments = useSegments();
   const isResetPasswordRoute = segments[0] === "reset-password";
 
-  return (
-    <PassportProvider authenticatedUser={profile ?? undefined}>
-      <StatusBar style="light" />
-      {isResetPasswordRoute ? (
+  if (isResetPasswordRoute) {
+    return (
+      <>
+        <StatusBar style="light" />
         <Stack
           screenOptions={{
             headerShown: false,
             contentStyle: { backgroundColor: theme.colors.background }
           }}
         />
-      ) : (
+      </>
+    );
+  }
+
+  if (loading || !profile) {
+    return (
+      <>
+        <StatusBar style="light" />
         <AuthGate>
           <Stack
             screenOptions={{
@@ -41,9 +48,23 @@ function AuthenticatedApp() {
               contentStyle: { backgroundColor: theme.colors.background }
             }}
           />
-          <OnboardingModal />
         </AuthGate>
-      )}
+      </>
+    );
+  }
+
+  return (
+    <PassportProvider key={profile.id} authenticatedUser={profile}>
+      <StatusBar style="light" />
+      <AuthGate>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: theme.colors.background }
+          }}
+        />
+        <OnboardingModal />
+      </AuthGate>
     </PassportProvider>
   );
 }
