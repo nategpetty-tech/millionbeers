@@ -1,4 +1,5 @@
-import { Image, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Image, Text, View } from "react-native";
 import { theme } from "@/theme";
 
 type Props = {
@@ -9,6 +10,16 @@ type Props = {
 };
 
 export function Avatar({ label, uri, size = 40, borderColor = theme.colors.border }: Props) {
+  const [loadedUri, setLoadedUri] = useState<string | undefined>();
+  const [failedUri, setFailedUri] = useState<string | undefined>();
+  const failed = Boolean(uri && failedUri === uri);
+  const loading = Boolean(uri && loadedUri !== uri && !failed);
+
+  useEffect(() => {
+    setLoadedUri(undefined);
+    setFailedUri(undefined);
+  }, [uri]);
+
   return (
     <View
       style={{
@@ -23,11 +34,27 @@ export function Avatar({ label, uri, size = 40, borderColor = theme.colors.borde
         borderColor
       }}
     >
-      {uri ? (
-        <Image source={{ uri }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
-      ) : (
-        <Text style={{ color: theme.colors.neon, fontWeight: "900", fontSize: Math.max(12, Math.round(size * 0.38)) }}>{label}</Text>
-      )}
+      {uri && !failed ? (
+        <>
+          <Image
+            source={{ uri }}
+            style={{ width: "100%", height: "100%", opacity: loading ? 0 : 1 }}
+            resizeMode="cover"
+            onLoadEnd={() => setLoadedUri(uri)}
+            onError={() => setFailedUri(uri)}
+          />
+          {loading ? (
+            <View style={{ position: "absolute", inset: 0, alignItems: "center", justifyContent: "center" }}>
+              <ActivityIndicator color={theme.colors.neon} size={size >= 64 ? "large" : "small"} />
+            </View>
+          ) : null}
+        </>
+      ) : null}
+      {!uri || loading || failed ? (
+        <Text style={{ position: loading ? "absolute" : "relative", color: theme.colors.neon, fontWeight: "900", fontSize: Math.max(12, Math.round(size * 0.38)) }}>
+          {label}
+        </Text>
+      ) : null}
     </View>
   );
 }

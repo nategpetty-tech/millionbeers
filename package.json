@@ -12,7 +12,8 @@
     "release:info": "node scripts/print-release-info.js",
     "release:check": "npm run typecheck && npx expo install --check",
     "release:doctor": "npx expo-doctor",
-    "release:ios-build": "npx eas-cli@latest build --platform ios --profile production"
+    "release:ios-build": "npx eas-cli@latest build --platform ios --profile production",
+    "storage:backfill-thumbnails": "node scripts/backfill-photo-thumbnails.js"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

@@ -1,4 +1,5 @@
 import * as FileSystem from "expo-file-system/legacy";
+import { compressBeerThumbnail } from "@/services/photoCompression";
 import { supabase } from "@/services/supabase";
 
 const beerPhotoBucketName = process.env.EXPO_PUBLIC_SUPABASE_PHOTO_BUCKET ?? "beer-photos";
@@ -9,6 +10,8 @@ export type UploadedPhoto = {
   localUri: string;
   signedUrl: string;
   storagePath: string;
+  thumbnailSignedUrl?: string;
+  thumbnailStoragePath?: string;
 };
 
 export function isPhotoStorageConfigured() {
@@ -24,7 +27,19 @@ export function isGroupBackdropStorageConfigured() {
 }
 
 export async function uploadCheckInPhoto(localUri: string, userId: string): Promise<UploadedPhoto> {
-  return uploadPhoto(localUri, beerPhotoBucketName, `${userId}/${new Date().toISOString().slice(0, 10)}`);
+  const datePath = new Date().toISOString().slice(0, 10);
+  const uploaded = await uploadPhoto(localUri, beerPhotoBucketName, `${userId}/${datePath}`);
+  try {
+    const thumbnail = await compressBeerThumbnail(localUri);
+    const uploadedThumbnail = await uploadPhoto(thumbnail.uri, beerPhotoBucketName, `${userId}/${datePath}/thumbs`);
+    return {
+      ...uploaded,
+      thumbnailSignedUrl: uploadedThumbnail.signedUrl,
+      thumbnailStoragePath: uploadedThumbnail.storagePath
+    };
+  } catch {
+    return uploaded;
+  }
 }
 
 export async function uploadProfilePhoto(localUri: string, userId: string): Promise<UploadedPhoto> {
@@ -37,6 +52,10 @@ export async function uploadGroupBackdrop(localUri: string, ownerId: string): Pr
 
 export async function createSignedGroupBackdropUrl(storagePath: string) {
   return createSignedPhotoUrl(storagePath, groupBackdropBucketName);
+}
+
+export async function createSignedProfilePhotoUrl(storagePath: string) {
+  return createSignedPhotoUrl(storagePath, profilePhotoBucketName);
 }
 
 async function uploadPhoto(localUri: string, bucketName: string, directory: string): Promise<UploadedPhoto> {

@@ -17,7 +17,8 @@ const SAME_PLACE_METERS = 60;
 
 type PinPhoto = {
   id: string;
-  uri: string;
+  fullUri: string;
+  thumbnailUri: string;
   createdAt: string;
   beerCount: number;
   userName: string;
@@ -344,7 +345,8 @@ function addCheckInToPin(pin: Pin, item: BeerCheckIn) {
   if (photoUri) {
     pin.photos.unshift({
       id: item.id,
-      uri: photoUri,
+      fullUri: photoUri,
+      thumbnailUri: item.photoThumbnailUrl ?? photoUri,
       createdAt: item.createdAt,
       beerCount: item.quantity ?? 1,
       userName: item.userName
@@ -388,6 +390,7 @@ function LocationSummary({
   onPhotosLayout?: (y: number) => void;
 }) {
   const [previewPhoto, setPreviewPhoto] = useState<PinPhoto | null>(null);
+  const visiblePhotos = pin?.photos.slice(0, 8) ?? [];
 
   if (!pin) {
     return (
@@ -463,13 +466,13 @@ function LocationSummary({
         style={{ marginTop: 14 }}
       >
         <Text style={{ color: theme.colors.text, fontWeight: "900", marginBottom: 10 }}>Photos from this place</Text>
-        {pin.photos.length ? (
+        {visiblePhotos.length ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View style={{ flexDirection: "row", gap: 10 }}>
-              {pin.photos.map((photo) => (
+              {visiblePhotos.map((photo) => (
                 <Pressable key={photo.id} onPress={() => setPreviewPhoto(photo)}>
                   <Image
-                    source={{ uri: photo.uri }}
+                    source={{ uri: photo.thumbnailUri }}
                     style={{
                       width: 92,
                       height: 116,
@@ -511,7 +514,7 @@ function LocationSummary({
         >
           {previewPhoto ? (
             <Image
-              source={{ uri: previewPhoto.uri }}
+              source={{ uri: previewPhoto.fullUri }}
               resizeMode="contain"
               style={{ width: "100%", height: "78%", borderRadius: theme.radius.lg }}
             />

@@ -66,6 +66,8 @@ create table if not exists public.check_ins (
   note text,
   photo_url text,
   photo_storage_path text,
+  photo_thumbnail_url text,
+  photo_thumbnail_storage_path text,
   scanned_beer_count integer check (scanned_beer_count is null or scanned_beer_count between 0 and 24),
   scan_confidence numeric check (scan_confidence is null or (scan_confidence >= 0 and scan_confidence <= 1)),
   scan_status text check (scan_status is null or scan_status in ('confirmed', 'mismatch', 'uncertain', 'unavailable')),
@@ -75,6 +77,8 @@ create table if not exists public.check_ins (
 );
 
 alter table public.check_ins add column if not exists country text;
+alter table public.check_ins add column if not exists photo_thumbnail_url text;
+alter table public.check_ins add column if not exists photo_thumbnail_storage_path text;
 alter table public.check_ins add column if not exists scanned_beer_count integer;
 alter table public.check_ins add column if not exists scan_confidence numeric;
 alter table public.check_ins add column if not exists scan_status text;

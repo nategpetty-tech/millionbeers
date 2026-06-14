@@ -15,6 +15,8 @@ type UploadSuccess = {
   checkInId: string;
   photoUrl: string;
   photoStoragePath: string;
+  photoThumbnailUrl?: string;
+  photoThumbnailStoragePath?: string;
 };
 
 type UploadFailure = {
@@ -104,7 +106,9 @@ export async function processPhotoUploadQueue() {
         await onSuccessHandler?.({
           checkInId: item.checkInId,
           photoUrl: uploaded.signedUrl,
-          photoStoragePath: uploaded.storagePath
+          photoStoragePath: uploaded.storagePath,
+          photoThumbnailUrl: uploaded.thumbnailSignedUrl,
+          photoThumbnailStoragePath: uploaded.thumbnailStoragePath
         });
         queue = queue.filter((queued) => queued.checkInId !== item.checkInId);
         await writeQueue(queue);

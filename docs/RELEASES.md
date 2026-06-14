@@ -9,6 +9,7 @@ Update this table after every EAS production build and again after Apple/TestFli
 | 2026-06-06 | Unknown | 1.0.0 | 1 | production | Unknown | Yes, inferred | Processed, inferred | Unknown | Initial TestFlight upload. Known issue: build was missing Supabase public env values and showed the credentials-needed screen. |
 | 2026-06-08 | TBD | 1.0.0 | 2 | production | TBD | TBD | TBD | TBD | Current prepared release config. Includes Pintly rename, Supabase public env values in EAS production profile, and New Architecture enabled for Reanimated. Replace `TBD` values after the EAS build/submit. |
 | 2026-06-13 | TBD | 1.0.0 | 5 | production | TBD | TBD | TBD | Not submitted | Prepared external tester build with Home tab rename, hidden Challenges tab, and centered add-beer tab action. |
+| 2026-06-14 | TBD | 1.0.0 | 6 | production | TBD | TBD | TBD | Not submitted | Prepared external tester build with build 5 UI updates, app icon refresh, onboarding/session stability fixes, profile avatar loading fixes, uncapped XP progress, quieter stamp sync state, and storage thumbnail/egress reductions. |
 
 ## Status Definitions
 
@@ -21,7 +22,7 @@ Update this table after every EAS production build and again after Apple/TestFli
 Use this tag format for the exact commit used by the uploaded EAS build:
 
 ```sh
-pintly-ios-v1.0.0-build5
+pintly-ios-v1.0.0-build6
 ```
 
 Do not create tags retroactively unless you are confident the tag points to the exact commit used for that uploaded build.

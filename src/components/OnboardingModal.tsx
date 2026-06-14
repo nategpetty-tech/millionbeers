@@ -1,13 +1,17 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Modal, Pressable, Text, TextInput, View } from "react-native";
 import { usePassport } from "@/store/passportStore";
 import { theme } from "@/theme";
 
 export function OnboardingModal() {
-  const { user, updateProfile } = usePassport();
+  const { initialized, user, updateProfile } = usePassport();
   const [name, setName] = useState(user.name);
-  const visible = !user.hasOnboarded;
+  const visible = initialized && !user.hasOnboarded;
+
+  useEffect(() => {
+    if (visible) setName(user.name);
+  }, [user.name, visible]);
 
   function submit() {
     const trimmed = name.trim();

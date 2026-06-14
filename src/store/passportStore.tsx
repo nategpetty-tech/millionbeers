@@ -24,6 +24,7 @@ import {
   upsertProfile
 } from "@/services/pintlyData";
 import { configurePhotoUploadQueue, enqueuePhotoUpload, startPhotoUploadQueueLifecycle } from "@/services/photoUploadQueue";
+import { createSignedProfilePhotoUrl } from "@/services/photoStorage";
 import {
   Badge,
   BeerCheckIn,
@@ -135,6 +136,16 @@ function totalBeerQuantity(checkIns: BeerCheckIn[]) {
   return checkIns.reduce((sum, checkIn) => sum + beerQuantity(checkIn), 0);
 }
 
+function levelProgressForBeerTotal(beerTotal: number, xpGoal: number) {
+  const goal = Math.max(1, xpGoal);
+  const totalXp = beerTotal * 25;
+  return {
+    level: Math.floor(totalXp / goal) + 1,
+    xp: totalXp % goal,
+    xpGoal: goal
+  };
+}
+
 function initialsFor(name: string) {
   const initials = name
     .trim()
@@ -192,17 +203,20 @@ function incrementMember(members: GroupMember[], user: User, quantity: number) {
 function deriveUserAfterCheckIn(user: User, checkIns: BeerCheckIn[]) {
   const own = checkIns.filter((checkIn) => checkIn.userId === user.id);
   const ownBeerTotal = totalBeerQuantity(own);
+  const levelProgress = levelProgressForBeerTotal(ownBeerTotal, user.xpGoal);
   return {
     ...user,
+    ...levelProgress,
     totalBeers: ownBeerTotal,
     cities: Math.max(user.cities, countDistinct(own.map((checkIn) => checkIn.location.city))),
-    states: Math.max(user.states, countDistinct(own.map((checkIn) => checkIn.location.state ?? ""))),
-    xp: Math.min(user.xpGoal, ownBeerTotal * 25)
+    states: Math.max(user.states, countDistinct(own.map((checkIn) => checkIn.location.state ?? "")))
   };
 }
 
 function deriveCounts(baseUser: User, checkIns: BeerCheckIn[], groups: Group[], globalFloor = 0) {
   const own = checkIns.filter((checkIn) => checkIn.userId === baseUser.id);
+  const ownBeerTotal = totalBeerQuantity(own);
+  const levelProgress = levelProgressForBeerTotal(ownBeerTotal, baseUser.xpGoal);
   const nextGroups = groups.map((group) => {
     const groupCheckIns = checkIns.filter((item) => item.groupIds.includes(group.id));
     const currentUserGroupCheckIns = groupCheckIns.filter((item) => item.userId === baseUser.id);
@@ -233,10 +247,10 @@ function deriveCounts(baseUser: User, checkIns: BeerCheckIn[], groups: Group[], 
   return {
     user: {
       ...baseUser,
-      totalBeers: totalBeerQuantity(own),
+      ...levelProgress,
+      totalBeers: ownBeerTotal,
       cities: countDistinct(own.map((item) => item.location.city)),
-      states: countDistinct(own.map((item) => item.location.state ?? "")),
-      xp: Math.min(baseUser.xpGoal, totalBeerQuantity(own) * 25)
+      states: countDistinct(own.map((item) => item.location.state ?? ""))
     },
     groups: nextGroups,
     globalCount: Math.max(globalFloor, totalBeerQuantity(checkIns))
@@ -346,6 +360,23 @@ function mergeRemoteCheckIns(localCheckIns: BeerCheckIn[], remoteCheckIns: BeerC
   return [...localOnly, ...remoteCheckIns].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
+async function refreshUserAvatarUrl(user: User): Promise<User> {
+  if (!user.avatarStoragePath) return user;
+  const avatarUrl = await createSignedProfilePhotoUrl(user.avatarStoragePath).catch(() => undefined);
+  return avatarUrl ? { ...user, avatarUrl } : user;
+}
+
+async function loadStoredState(storageKey: string): Promise<PassportState | null> {
+  const saved = await AsyncStorage.getItem(storageKey);
+  if (!saved) return null;
+  try {
+    return normalizeStoredState(JSON.parse(saved));
+  } catch {
+    await AsyncStorage.removeItem(storageKey);
+    return null;
+  }
+}
+
 type PassportProviderProps = PropsWithChildren<{
   authenticatedUser?: AuthProfile;
 }>;
@@ -363,23 +394,25 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
   );
 
   const initializeSeedData = useCallback(async () => {
-    const saved = await AsyncStorage.getItem(storageKey);
-    if (saved) {
-      const normalized = normalizeStoredState(JSON.parse(saved));
-      const remote = await fetchRemoteSnapshot(normalized.user);
+    const normalized = await loadStoredState(storageKey);
+    if (normalized) {
+      const refreshedUser = await refreshUserAvatarUrl(normalized.user);
+      const refreshed = normalizeStoredState({ ...normalized, user: refreshedUser });
+      const remote = await fetchRemoteSnapshot(refreshed.user);
       const fallbackGlobalCount = remote ? null : await fetchRemoteGlobalCount();
       const nextState = remote
         ? normalizeStoredState({
-            ...normalized,
+            ...refreshed,
+            user: remote.user,
             groups: remote.groups,
-            checkIns: mergeRemoteCheckIns(normalized.checkIns, remote.checkIns),
+            checkIns: mergeRemoteCheckIns(refreshed.checkIns, remote.checkIns),
             friends: remote.friends,
             friendRequests: remote.friendRequests,
             globalCount: remote.globalCount
           })
         : normalizeStoredState({
-            ...normalized,
-            globalCount: fallbackGlobalCount ?? normalized.globalCount
+            ...refreshed,
+            globalCount: fallbackGlobalCount ?? refreshed.globalCount
           });
       setState(nextState);
       await persist(nextState);
@@ -391,6 +424,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
     const nextState = remote
       ? normalizeStoredState({
           ...seeded,
+          user: remote.user,
           groups: remote.groups,
           checkIns: mergeRemoteCheckIns(seeded.checkIns, remote.checkIns),
           friends: remote.friends,
@@ -753,6 +787,8 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         photoUri: input.photoUri,
         photoUrl: input.photoUrl,
         photoStoragePath: input.photoStoragePath,
+        photoThumbnailUrl: input.photoThumbnailUrl,
+        photoThumbnailStoragePath: input.photoThumbnailStoragePath,
         photoSyncStatus: input.photoSyncStatus ?? (input.photoStoragePath || input.photoUrl ? "synced" : input.photoUri ? "queued" : undefined),
         remoteSyncStatus: input.remoteSyncStatus ?? "queued",
         scannedBeerCount: input.scannedBeerCount,
@@ -857,7 +893,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
     const pending = state.checkIns.filter(
       (checkIn) =>
         checkIn.userId === state.user.id &&
-        checkIn.remoteSyncStatus !== "synced" &&
+        checkIn.remoteSyncStatus === "queued" &&
         !remoteSyncingIds.current.has(checkIn.id)
     );
     pending.forEach((checkIn) => {
@@ -933,6 +969,8 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
                 ...checkIn,
                 photoUrl: input.photoUrl ?? checkIn.photoUrl,
                 photoStoragePath: input.photoStoragePath ?? checkIn.photoStoragePath,
+                photoThumbnailUrl: input.photoThumbnailUrl ?? checkIn.photoThumbnailUrl,
+                photoThumbnailStoragePath: input.photoThumbnailStoragePath ?? checkIn.photoThumbnailStoragePath,
                 photoSyncStatus: input.photoSyncStatus ?? checkIn.photoSyncStatus
               }
             : checkIn
@@ -952,14 +990,18 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
           photoSyncStatus: "syncing"
         });
       },
-      onSuccess: async ({ checkInId, photoUrl, photoStoragePath }) => {
+      onSuccess: async ({ checkInId, photoUrl, photoStoragePath, photoThumbnailUrl, photoThumbnailStoragePath }) => {
         await updateRemoteCheckInPhoto(checkInId, {
           photoUrl,
-          photoStoragePath
+          photoStoragePath,
+          photoThumbnailUrl,
+          photoThumbnailStoragePath
         });
         updateCheckInPhoto(checkInId, {
           photoUrl,
           photoStoragePath,
+          photoThumbnailUrl,
+          photoThumbnailStoragePath,
           photoSyncStatus: "synced"
         });
       },

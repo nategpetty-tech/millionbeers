@@ -20,6 +20,7 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
   const reacted = item.reactedBy.includes(currentUserId);
   const canDelete = item.userId === currentUserId && Boolean(onDelete);
   const photoSource = item.photoUrl ?? item.photoUri;
+  const thumbnailSource = item.photoThumbnailUrl ?? photoSource;
   const placeLabel = broadPlaceLabel(item.location);
   const normalizedBrewery = item.brewery.toLowerCase();
   const showBrewery = item.brewery && !normalizedBrewery.includes("check-in") && !normalizedBrewery.includes("pintly log");
@@ -37,7 +38,7 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
   useEffect(() => {
     setImageFailed(false);
     setPhotoSize(undefined);
-    if (photoSource) {
+    if (photoSource && (variant === "photo" || photoOpen)) {
       Image.getSize(
         photoSource,
         (width, height) => setPhotoSize({ width, height }),
@@ -51,7 +52,7 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
         singleTapTimer.current = null;
       }
     };
-  }, [item.id, photoSource]);
+  }, [item.id, photoOpen, photoSource, variant]);
 
   function confirmDelete() {
     Alert.alert("Delete check-in?", "This removes the stamp from Pintly and any selected group trackers.", [
@@ -108,7 +109,7 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
           <Text style={{ color: theme.colors.dim, marginTop: 2, fontSize: 12 }}>{timeAgo(item.createdAt)}</Text>
         </View>
         {variant === "compact" ? (
-          <PhotoThumb photoSource={photoSource} imageFailed={imageFailed} onPress={handlePhotoPress} onError={() => setImageFailed(true)} />
+          <PhotoThumb photoSource={thumbnailSource} imageFailed={imageFailed} onPress={handlePhotoPress} onError={() => setImageFailed(true)} />
         ) : null}
         <View style={{ alignItems: "center", gap: 8 }}>
           {canDelete && onEdit ? (

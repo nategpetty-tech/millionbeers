@@ -137,6 +137,8 @@ export type BeerCheckIn = {
   photoUri?: string;
   photoUrl?: string;
   photoStoragePath?: string;
+  photoThumbnailUrl?: string;
+  photoThumbnailStoragePath?: string;
   photoSyncStatus?: "local" | "queued" | "syncing" | "synced" | "failed";
   remoteSyncStatus?: "queued" | "syncing" | "synced" | "failed";
   scannedBeerCount?: number;
@@ -188,6 +190,8 @@ export type CheckInInput = {
   photoUri?: string;
   photoUrl?: string;
   photoStoragePath?: string;
+  photoThumbnailUrl?: string;
+  photoThumbnailStoragePath?: string;
   photoSyncStatus?: BeerCheckIn["photoSyncStatus"];
   remoteSyncStatus?: BeerCheckIn["remoteSyncStatus"];
   scannedBeerCount?: number;
@@ -214,6 +218,8 @@ export type UpdateCheckInScanInput = {
 export type UpdateCheckInPhotoInput = {
   photoUrl?: string;
   photoStoragePath?: string;
+  photoThumbnailUrl?: string;
+  photoThumbnailStoragePath?: string;
   photoSyncStatus?: BeerCheckIn["photoSyncStatus"];
 };
 

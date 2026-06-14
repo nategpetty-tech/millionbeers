@@ -1,5 +1,5 @@
 import { supabase } from "@/services/supabase";
-import { createSignedGroupBackdropUrl, createSignedPhotoUrl } from "@/services/photoStorage";
+import { createSignedGroupBackdropUrl, createSignedPhotoUrl, createSignedProfilePhotoUrl } from "@/services/photoStorage";
 import { friendsFeatureEnabled } from "@/config/features";
 import {
   BeerCheckIn,
@@ -106,6 +106,8 @@ type CheckInRow = {
   note: string | null;
   photo_url: string | null;
   photo_storage_path: string | null;
+  photo_thumbnail_url: string | null;
+  photo_thumbnail_storage_path: string | null;
   scanned_beer_count: number | null;
   scan_confidence: number | null;
   scan_status: BeerCheckIn["scanStatus"] | null;
@@ -118,6 +120,7 @@ type CheckInRow = {
 };
 
 export type RemoteSnapshot = {
+  user: User;
   groups: Group[];
   checkIns: BeerCheckIn[];
   friends: FriendProfile[];
@@ -138,6 +141,7 @@ export async function fetchRemoteGlobalCount(): Promise<number | null> {
 
 export async function upsertProfile(user: User) {
   if (!supabase) return;
+  if (!user.name.trim()) return;
   await supabase.from("profiles").upsert({
     id: user.id,
     display_name: user.name || "Pintly User",
@@ -151,7 +155,8 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
   if (!supabase) return null;
 
   try {
-    await upsertProfile(currentUser);
+    const remoteUser = await fetchRemoteUserProfile(currentUser);
+    await upsertProfile(remoteUser);
 
     const [
       { data: groupRows, error: groupError },
@@ -234,15 +239,37 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
     );
 
     return {
+      user: remoteUser,
       groups,
       checkIns,
-      friends: typedFriends.map(mapFriendRow),
-      friendRequests: typedFriendRequests.map((row) => mapFriendRequestRow(row, currentUser.id)),
+      friends: await Promise.all(typedFriends.map(mapFriendRow)),
+      friendRequests: await Promise.all(typedFriendRequests.map((row) => mapFriendRequestRow(row, currentUser.id))),
       globalCount: Number(globalCount ?? checkIns.reduce((sum, item) => sum + item.quantity, 0))
     };
   } catch {
     return null;
   }
+}
+
+async function fetchRemoteUserProfile(currentUser: User): Promise<User> {
+  if (!supabase) return currentUser;
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id,display_name,avatar,avatar_url,avatar_storage_path")
+    .eq("id", currentUser.id)
+    .maybeSingle();
+  if (error || !data) return currentUser;
+  const profile = data as ProfileRow;
+  const name = profile.display_name || currentUser.name;
+  const avatarUrl = await resolveProfileAvatarUrl(profile);
+  return {
+    ...currentUser,
+    name,
+    avatar: profile.avatar || initialsFor(name),
+    avatarUrl,
+    avatarStoragePath: profile.avatar_storage_path ?? currentUser.avatarStoragePath,
+    hasOnboarded: Boolean(name.trim()) || currentUser.hasOnboarded
+  };
 }
 
 export async function findRemoteGroupByInviteCode(inviteCode: string, currentUser: User): Promise<Group | null> {
@@ -321,13 +348,15 @@ export async function searchRemoteUsers(query: string): Promise<UserSearchResult
     search_input: trimmed
   });
   if (error) throw error;
-  return ((data ?? []) as UserSearchRow[]).map((row) => ({
-    userId: row.user_id,
-    name: row.display_name || "Pintly User",
-    avatar: row.avatar || initialsFor(row.display_name || "Pintly User"),
-    avatarUrl: row.avatar_url ?? undefined,
-    relationship: row.relationship
-  }));
+  return Promise.all(
+    ((data ?? []) as UserSearchRow[]).map(async (row) => ({
+      userId: row.user_id,
+      name: row.display_name || "Pintly User",
+      avatar: row.avatar || initialsFor(row.display_name || "Pintly User"),
+      avatarUrl: row.avatar_url ?? undefined,
+      relationship: row.relationship
+    }))
+  );
 }
 
 export async function requestRemoteFriend(user: User, addresseeId: string) {
@@ -392,6 +421,8 @@ export async function createRemoteCheckInFromLocal(localCheckIn: BeerCheckIn, gr
       note: localCheckIn.note ?? null,
       photo_url: localCheckIn.photoUrl ?? null,
       photo_storage_path: localCheckIn.photoStoragePath ?? null,
+      photo_thumbnail_url: localCheckIn.photoThumbnailUrl ?? null,
+      photo_thumbnail_storage_path: localCheckIn.photoThumbnailStoragePath ?? null,
       scanned_beer_count: localCheckIn.scannedBeerCount ?? null,
       scan_confidence: localCheckIn.scanConfidence ?? null,
       scan_status: localCheckIn.scanStatus ?? null,
@@ -446,7 +477,9 @@ export async function updateRemoteCheckInPhoto(checkInId: string, input: UpdateC
       .from("check_ins")
       .update({
         photo_url: input.photoUrl ?? null,
-        photo_storage_path: input.photoStoragePath ?? null
+        photo_storage_path: input.photoStoragePath ?? null,
+        photo_thumbnail_url: input.photoThumbnailUrl ?? null,
+        photo_thumbnail_storage_path: input.photoThumbnailStoragePath ?? null
       })
       .eq("id", checkInId);
     if (!error) return;
@@ -484,21 +517,23 @@ async function mapGroupRow(
   isAccessible: boolean
 ): Promise<Group> {
   const signedBackdropUrl = row.backdrop_storage_path ? await createSignedGroupBackdropUrl(row.backdrop_storage_path).catch(() => undefined) : undefined;
-  const members: GroupMember[] = memberships
-    .filter((membership) => membership.group_id === row.id)
-    .map((membership) => {
+  const members: GroupMember[] = await Promise.all(
+    memberships
+      .filter((membership) => membership.group_id === row.id)
+      .map(async (membership) => {
       const userCheckIns = checkIns.filter((checkIn) => checkIn.userId === membership.user_id);
       const profile = normalizeProfile(membership.profiles);
       return {
         userId: membership.user_id,
         name: profile?.display_name ?? "Pintly User",
         avatar: profile?.avatar ?? "HU",
-        avatarUrl: profile?.avatar_url ?? undefined,
+        avatarUrl: await resolveProfileAvatarUrl(profile),
         beerCount: userCheckIns.reduce((sum, item) => sum + item.quantity, 0),
         checkInCount: userCheckIns.length,
         isCurrentUser: membership.user_id === currentUserId
       };
-    });
+      })
+  );
 
   return {
     id: row.id,
@@ -517,18 +552,18 @@ async function mapGroupRow(
     founderId: row.founder_id,
     inviteCode: row.invite_code,
     members,
-    pendingRequests: requests.filter((request) => request.group_id === row.id).map(mapJoinRequestRow)
+    pendingRequests: await Promise.all(requests.filter((request) => request.group_id === row.id).map(mapJoinRequestRow))
   };
 }
 
-function mapJoinRequestRow(row: JoinRequestRow): GroupJoinRequest {
+async function mapJoinRequestRow(row: JoinRequestRow): Promise<GroupJoinRequest> {
   const profile = normalizeProfile(row.profiles);
   return {
     id: row.id,
     userId: row.user_id,
     name: profile?.display_name ?? "Pintly User",
     avatar: profile?.avatar ?? "HU",
-    avatarUrl: profile?.avatar_url ?? undefined,
+    avatarUrl: await resolveProfileAvatarUrl(profile),
     requestedAt: row.requested_at,
     source: row.source,
     status: row.status
@@ -536,25 +571,27 @@ function mapJoinRequestRow(row: JoinRequestRow): GroupJoinRequest {
 }
 
 async function mapCheckInRow(row: CheckInRow): Promise<BeerCheckIn> {
-  const reactionUsers = (row.check_in_reactions ?? []).map((reaction) => {
+  const reactionUsers = await Promise.all((row.check_in_reactions ?? []).map(async (reaction) => {
     const reactionProfile = normalizeProfile(reaction.profiles);
     const name = reactionProfile?.display_name ?? "Pintly User";
     return {
       id: reaction.user_id,
       name,
       avatar: reactionProfile?.avatar ?? initialsFor(name),
-      avatarUrl: reactionProfile?.avatar_url ?? undefined
+      avatarUrl: await resolveProfileAvatarUrl(reactionProfile)
     };
-  });
+  }));
   const reactedBy = reactionUsers.map((reaction) => reaction.id);
   const profile = normalizeProfile(row.profiles);
   const signedPhotoUrl = row.photo_storage_path ? await createSignedPhotoUrl(row.photo_storage_path).catch(() => undefined) : undefined;
+  const signedThumbnailUrl = row.photo_thumbnail_storage_path ? await createSignedPhotoUrl(row.photo_thumbnail_storage_path).catch(() => undefined) : undefined;
+  const userAvatarUrl = await resolveProfileAvatarUrl(profile);
   return {
     id: row.id,
     userId: row.user_id,
     userName: profile?.display_name ?? "Pintly User",
     userAvatar: profile?.avatar ?? "HU",
-    userAvatarUrl: profile?.avatar_url ?? undefined,
+    userAvatarUrl,
     beerName: row.beer_name,
     quantity: row.quantity,
     brewery: row.brewery,
@@ -571,6 +608,8 @@ async function mapCheckInRow(row: CheckInRow): Promise<BeerCheckIn> {
     note: row.note ?? undefined,
     photoUrl: signedPhotoUrl ?? row.photo_url ?? undefined,
     photoStoragePath: row.photo_storage_path ?? undefined,
+    photoThumbnailUrl: signedThumbnailUrl ?? row.photo_thumbnail_url ?? undefined,
+    photoThumbnailStoragePath: row.photo_thumbnail_storage_path ?? undefined,
     photoSyncStatus: row.photo_storage_path || row.photo_url ? "synced" : undefined,
     remoteSyncStatus: "synced",
     scannedBeerCount: row.scanned_beer_count ?? undefined,
@@ -590,17 +629,17 @@ function normalizeProfile(profile: ProfileRow | ProfileRow[] | null | undefined)
   return Array.isArray(profile) ? profile[0] : profile;
 }
 
-function mapFriendRow(row: FriendRow): FriendProfile {
+async function mapFriendRow(row: FriendRow): Promise<FriendProfile> {
   const profile = normalizeProfile(row.profiles);
   return {
     userId: row.friend_id,
     name: profile?.display_name ?? "Pintly User",
     avatar: profile?.avatar ?? initialsFor(profile?.display_name ?? "Pintly User"),
-    avatarUrl: profile?.avatar_url ?? undefined
+    avatarUrl: await resolveProfileAvatarUrl(profile)
   };
 }
 
-function mapFriendRequestRow(row: FriendRequestRow, currentUserId: string): FriendRequest {
+async function mapFriendRequestRow(row: FriendRequestRow, currentUserId: string): Promise<FriendRequest> {
   const incoming = row.addressee_id === currentUserId;
   const otherProfile = normalizeProfile(incoming ? row.requester : row.addressee);
   return {
@@ -608,11 +647,17 @@ function mapFriendRequestRow(row: FriendRequestRow, currentUserId: string): Frie
     userId: incoming ? row.requester_id : row.addressee_id,
     name: otherProfile?.display_name ?? "Pintly User",
     avatar: otherProfile?.avatar ?? initialsFor(otherProfile?.display_name ?? "Pintly User"),
-    avatarUrl: otherProfile?.avatar_url ?? undefined,
+    avatarUrl: await resolveProfileAvatarUrl(otherProfile),
     direction: incoming ? "incoming" : "outgoing",
     status: row.status,
     requestedAt: row.created_at
   };
+}
+
+async function resolveProfileAvatarUrl(profile: ProfileRow | null | undefined) {
+  if (!profile) return undefined;
+  if (!profile.avatar_storage_path) return profile.avatar_url ?? undefined;
+  return createSignedProfilePhotoUrl(profile.avatar_storage_path).catch(() => profile.avatar_url ?? undefined);
 }
 
 function initialsFor(name: string) {

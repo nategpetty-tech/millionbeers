@@ -7,15 +7,19 @@ export type CompressedPhoto = {
 };
 
 export async function compressBeerPhoto(uri: string): Promise<CompressedPhoto> {
-  return compressPhoto(uri, { maxWidth: 1280, compress: 0.68 });
+  return compressPhoto(uri, { maxWidth: 900, compress: 0.58 });
+}
+
+export async function compressBeerThumbnail(uri: string): Promise<CompressedPhoto> {
+  return compressPhoto(uri, { maxWidth: 320, compress: 0.52 });
 }
 
 export async function compressProfilePhoto(uri: string): Promise<CompressedPhoto> {
-  return compressPhoto(uri, { maxWidth: 900, compress: 0.78 });
+  return compressPhoto(uri, { maxWidth: 360, compress: 0.7 });
 }
 
 export async function compressBackdropPhoto(uri: string): Promise<CompressedPhoto> {
-  return compressPhoto(uri, { maxWidth: 1800, compress: 0.78 });
+  return compressPhoto(uri, { maxWidth: 1100, compress: 0.68 });
 }
 
 async function compressPhoto(uri: string, options: { maxWidth: number; compress: number }): Promise<CompressedPhoto> {
