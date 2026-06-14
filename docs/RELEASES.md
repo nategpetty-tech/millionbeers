@@ -12,6 +12,7 @@ Update this table after every EAS production build and again after Apple/TestFli
 | 2026-06-14 | TBD | 1.0.0 | 6 | production | TBD | TBD | TBD | Not submitted | Prepared external tester build with build 5 UI updates, app icon refresh, onboarding/session stability fixes, profile avatar loading fixes, uncapped XP progress, quieter stamp sync state, and storage thumbnail/egress reductions. |
 | 2026-06-14 | TBD | 1.0.0 | 7 | production | TBD | TBD | TBD | Not submitted | Release-candidate fix for auth/passport initialization race that could show onboarding and blank local history before the restored Supabase session was applied. |
 | 2026-06-14 | TBD | 1.0.0 | 8 | production | TBD | TBD | TBD | Not submitted | Release-candidate fix so remote account history is not discarded when noncritical social/group snapshot queries fail. |
+| 2026-06-14 | TBD | 1.0.0 | 9 | production | TBD | TBD | TBD | Not submitted | Release-candidate fix to always merge owner-scoped check-ins and memberships into the account snapshot so personal history does not depend on shared feed queries. |
 
 ## Status Definitions
 
@@ -24,7 +25,7 @@ Update this table after every EAS production build and again after Apple/TestFli
 Use this tag format for the exact commit used by the uploaded EAS build:
 
 ```sh
-pintly-ios-v1.0.0-build8
+pintly-ios-v1.0.0-build9
 ```
 
 Do not create tags retroactively unless you are confident the tag points to the exact commit used for that uploaded build.

@@ -195,31 +195,39 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
     if (friendError) console.warn("Could not load remote friends", friendError.message);
     if (friendRequestError) console.warn("Could not load remote friend requests", friendRequestError.message);
 
-    const typedMemberships = membershipError ? [] : ((membershipRows ?? []) as MembershipRow[]);
+    const ownMembershipResult = await fetchOwnRemoteMembershipRows(currentUser.id);
+    const typedMemberships = mergeMembershipRows(
+      membershipError ? [] : ((membershipRows ?? []) as MembershipRow[]),
+      ownMembershipResult.error ? [] : ((ownMembershipResult.data ?? []) as MembershipRow[])
+    );
     const typedRequests = requestError ? [] : ((requestRows ?? []) as JoinRequestRow[]);
     const typedFriends = friendError ? [] : ((friendRows ?? []) as FriendRow[]);
     const typedFriendRequests = friendRequestError ? [] : ((friendRequestRows ?? []) as FriendRequestRow[]);
     const accessibleGroupIds = new Set(typedMemberships.map((row) => row.group_id));
     let { data: checkInRows, error: checkInError } = await fetchRemoteCheckInRows();
+    const ownCheckInResult = await fetchOwnRemoteCheckInRows(currentUser.id);
 
     if (checkInError) {
       console.warn("Could not load remote check-ins", checkInError.message);
-      const ownResult = await fetchOwnRemoteCheckInRows(currentUser.id);
-      checkInRows = ownResult.data;
-      checkInError = ownResult.error;
+      checkInRows = ownCheckInResult.data;
+      checkInError = ownCheckInResult.error;
     }
 
-    if (checkInError) {
-      console.warn("Could not load own remote check-ins", checkInError.message);
-      checkInRows = [];
+    if (checkInError || ownCheckInResult.error) {
+      console.warn("Could not load own remote check-ins", (checkInError ?? ownCheckInResult.error)?.message);
     }
 
-    const mappedCheckIns = await Promise.all(((checkInRows ?? []) as CheckInRow[]).map(mapCheckInRow));
+    const mappedCheckIns = await Promise.all(mergeCheckInRows((checkInRows ?? []) as CheckInRow[], (ownCheckInResult.data ?? []) as CheckInRow[]).map(mapCheckInRow));
     const checkIns = friendsFeatureEnabled
       ? mappedCheckIns
       : mappedCheckIns.filter((checkIn) => checkIn.userId === currentUser.id || checkIn.groupIds.some((groupId) => accessibleGroupIds.has(groupId)));
+    const resolvedGroupRows =
+      groupError || !((groupRows ?? []) as GroupRow[]).some((group) => accessibleGroupIds.has(group.id))
+        ? await fetchOwnRemoteGroupRows([...accessibleGroupIds])
+        : { data: groupRows, error: null };
+    if (resolvedGroupRows.error) console.warn("Could not load own remote groups", resolvedGroupRows.error.message);
     const groups = await Promise.all(
-      (groupError ? [] : ((groupRows ?? []) as GroupRow[])).map((group) =>
+      ((resolvedGroupRows.data ?? []) as GroupRow[]).map((group) =>
         mapGroupRow(
         group,
         typedMemberships,
@@ -245,6 +253,19 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
   }
 }
 
+async function fetchOwnRemoteMembershipRows(userId: string) {
+  if (!supabase) return { data: [], error: null };
+  return supabase
+    .from("group_memberships")
+    .select("group_id,user_id,profiles!group_memberships_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path)")
+    .eq("user_id", userId);
+}
+
+async function fetchOwnRemoteGroupRows(groupIds: string[]) {
+  if (!supabase || !groupIds.length) return { data: [], error: null };
+  return supabase.from("groups").select("*").in("id", groupIds).order("created_at", { ascending: false });
+}
+
 async function fetchRemoteCheckInRows() {
   if (!supabase) return { data: [], error: null };
   const richResult = await supabase
@@ -261,6 +282,18 @@ async function fetchRemoteCheckInRows() {
     .from("check_ins")
     .select("*,profiles!check_ins_user_id_fkey(id,display_name,avatar,avatar_url,avatar_storage_path),check_in_groups(group_id),check_in_reactions(user_id)")
     .order("created_at", { ascending: false });
+}
+
+function mergeMembershipRows(primary: MembershipRow[], fallback: MembershipRow[]) {
+  const rowsByKey = new Map<string, MembershipRow>();
+  [...primary, ...fallback].forEach((row) => rowsByKey.set(`${row.group_id}:${row.user_id}`, row));
+  return [...rowsByKey.values()];
+}
+
+function mergeCheckInRows(primary: CheckInRow[], fallback: CheckInRow[]) {
+  const rowsById = new Map<string, CheckInRow>();
+  [...primary, ...fallback].forEach((row) => rowsById.set(row.id, row));
+  return [...rowsById.values()].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 }
 
 async function fetchOwnRemoteCheckInRows(userId: string) {
