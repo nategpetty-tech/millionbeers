@@ -3,44 +3,55 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Image } from "react-native";
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Avatar } from "@/components/Avatar";
-import { BeerCheckIn, ReactionUser } from "@/types";
+import { CommentButton, CommentsSheet } from "@/components/CommentsSheet";
+import { LikersModal } from "@/components/LikersModal";
+import { ZoomablePhotoModal } from "@/components/ZoomablePhotoModal";
+import { buildCloudflareImageUrl } from "@/services/photoStorage";
+import { BeerCheckIn, BeerComment, ModerationReportReason } from "@/types";
 import { theme } from "@/theme";
 import { broadPlaceLabel, timeAgo } from "@/utils/format";
+import { reactionUsersForCheckIn } from "@/utils/reactions";
 
 type Props = {
   item: BeerCheckIn;
   currentUserId: string;
   onReact?: (id: string) => void;
+  onAddComment?: (checkInId: string, body: string) => void;
+  onDeleteComment?: (checkInId: string, commentId: string) => void;
+  onReportComment?: (input: { checkInId: string; groupId?: string; comment: BeerComment; reason: ModerationReportReason; details: string }) => void;
   onEdit?: (id: string, input: { quantity: number; note?: string }) => void;
   onDelete?: (id: string) => void;
   variant?: "compact" | "photo";
 };
 
-export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, variant = "compact" }: Props) {
+export function ActivityItem({ item, currentUserId, onReact, onAddComment, onDeleteComment, onReportComment, onEdit, onDelete, variant = "compact" }: Props) {
   const reacted = item.reactedBy.includes(currentUserId);
   const canDelete = item.userId === currentUserId && Boolean(onDelete);
-  const photoSource = item.photoUrl ?? item.photoUri;
-  const thumbnailSource = item.photoThumbnailUrl ?? photoSource;
+  const photoSource = buildCloudflareImageUrl(item.photoCloudflareImageId, "feed") ?? item.photoUrl ?? item.photoUri;
+  const thumbnailSource = photoSource ?? item.photoThumbnailUrl;
+  const fullPhotoSource = photoSource ?? item.photoThumbnailUrl;
   const placeLabel = broadPlaceLabel(item.location);
   const normalizedBrewery = item.brewery.toLowerCase();
   const showBrewery = item.brewery && !normalizedBrewery.includes("check-in") && !normalizedBrewery.includes("pintly log");
   const isGenericPhotoStamp = ["photo stamp", "beer log"].includes(item.beerName.trim().toLowerCase());
-  const loggedCopy = `logged ${item.quantity} beer${item.quantity === 1 ? "" : "s"}`;
+  const loggedCopy = "logged a beer";
   const [imageFailed, setImageFailed] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [likersOpen, setLikersOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
   const [photoSize, setPhotoSize] = useState<{ width: number; height: number } | undefined>();
   const lastPhotoTap = useRef(0);
+  const lastPostTap = useRef(0);
   const singleTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reactionUsers = reactionUsersFor(item, currentUserId);
+  const reactionUsers = reactionUsersForCheckIn(item, currentUserId);
 
   useEffect(() => {
     setImageFailed(false);
     setPhotoSize(undefined);
-    if (photoSource && (variant === "photo" || photoOpen)) {
+    if (fullPhotoSource && (variant === "photo" || photoOpen)) {
       Image.getSize(
-        photoSource,
+        fullPhotoSource,
         (width, height) => setPhotoSize({ width, height }),
         () => setPhotoSize(undefined)
       );
@@ -52,7 +63,12 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
         singleTapTimer.current = null;
       }
     };
-  }, [item.id, photoOpen, photoSource, variant]);
+  }, [fullPhotoSource, item.id, photoOpen, variant]);
+
+  useEffect(() => {
+    if (photoSource) void Image.prefetch(photoSource);
+    if (fullPhotoSource && fullPhotoSource !== photoSource) void Image.prefetch(fullPhotoSource);
+  }, [fullPhotoSource, photoSource]);
 
   function confirmDelete() {
     Alert.alert("Delete check-in?", "This removes the stamp from Pintly and any selected group trackers.", [
@@ -74,7 +90,7 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
         singleTapTimer.current = null;
       }
       lastPhotoTap.current = 0;
-      onReact(item.id);
+      if (!reacted) onReact(item.id);
       return;
     }
 
@@ -86,27 +102,40 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
     }, 260);
   }
 
+  function handlePostPress() {
+    if (!onReact || reacted) return;
+    const now = Date.now();
+    if (now - lastPostTap.current < 280) {
+      lastPostTap.current = 0;
+      onReact(item.id);
+      return;
+    }
+    lastPostTap.current = now;
+  }
+
   return (
-    <View
+    <Pressable
+      onPress={handlePostPress}
       style={{
         backgroundColor: theme.colors.card,
         borderRadius: theme.radius.md,
         borderWidth: 1,
-        borderColor: theme.colors.border,
+        borderColor: theme.colors.cardBorder,
         padding: 12,
-        marginBottom: 9
+        marginBottom: 9,
+        ...theme.shadow.card
       }}
     >
       <View style={{ flexDirection: "row", gap: 11, alignItems: "center" }}>
         <Avatar label={item.userAvatar} uri={item.userAvatarUrl} size={38} />
         <View style={{ flex: 1 }}>
-          <Text style={{ color: theme.colors.muted, fontSize: 12 }}>
-            <Text style={{ color: theme.colors.neon, fontWeight: "900" }}>{item.userName}</Text> {loggedCopy}
+          <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>
+            <Text style={{ color: theme.colors.primary, fontWeight: "900" }}>{item.userName}</Text> {loggedCopy}
           </Text>
           {!isGenericPhotoStamp ? (
-            <Text style={{ color: theme.colors.text, marginTop: 2, fontWeight: "900", fontSize: 15 }}>{item.beerName}</Text>
+            <Text style={{ color: theme.colors.textPrimary, marginTop: 2, fontWeight: "900", fontSize: 15 }}>{item.beerName}</Text>
           ) : null}
-          <Text style={{ color: theme.colors.dim, marginTop: 2, fontSize: 12 }}>{timeAgo(item.createdAt)}</Text>
+          <Text style={{ color: theme.colors.textMuted, marginTop: 2, fontSize: 12 }}>{timeAgo(item.createdAt)}</Text>
         </View>
         {variant === "compact" ? (
           <PhotoThumb photoSource={thumbnailSource} imageFailed={imageFailed} onPress={handlePhotoPress} onError={() => setImageFailed(true)} />
@@ -114,12 +143,12 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
         <View style={{ alignItems: "center", gap: 8 }}>
           {canDelete && onEdit ? (
             <Pressable onPress={() => setEditOpen(true)} hitSlop={8}>
-              <Ionicons name="create-outline" color={theme.colors.neon} size={18} />
+              <Ionicons name="create-outline" color={theme.colors.primary} size={18} />
             </Pressable>
           ) : null}
           {canDelete ? (
             <Pressable onPress={confirmDelete} hitSlop={8}>
-              <Ionicons name="trash-outline" color={theme.colors.dim} size={18} />
+              <Ionicons name="trash-outline" color={theme.colors.textMuted} size={18} />
             </Pressable>
           ) : null}
         </View>
@@ -134,23 +163,7 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
           onError={() => setImageFailed(true)}
         />
       ) : null}
-      {item.note ? <Text style={{ color: theme.colors.muted, marginTop: 12, lineHeight: 20 }}>{item.note}</Text> : null}
-      {item.quantity > 1 ? (
-        <View
-          style={{
-            alignSelf: "flex-start",
-            marginTop: 10,
-            paddingHorizontal: 10,
-            paddingVertical: 6,
-            borderRadius: theme.radius.pill,
-            backgroundColor: theme.colors.neonSoft,
-            borderWidth: 1,
-            borderColor: theme.colors.neon
-          }}
-        >
-          <Text style={{ color: theme.colors.neon, fontWeight: "900", fontSize: 12 }}>{item.quantity} beers counted</Text>
-        </View>
-      ) : null}
+      {item.note ? <CaptionText text={item.note} /> : null}
       {item.userId === currentUserId && item.photoSyncStatus && item.photoSyncStatus !== "synced" ? (
         <View
           style={{
@@ -162,17 +175,17 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
             paddingHorizontal: 10,
             paddingVertical: 6,
             borderRadius: theme.radius.pill,
-            backgroundColor: item.photoSyncStatus === "failed" ? "rgba(255, 92, 92, 0.14)" : theme.colors.cardSoft,
+            backgroundColor: item.photoSyncStatus === "failed" ? theme.colors.dangerSoft : theme.colors.surfaceAlt,
             borderWidth: 1,
-            borderColor: item.photoSyncStatus === "failed" ? theme.colors.danger : theme.colors.border
+            borderColor: item.photoSyncStatus === "failed" ? theme.colors.danger : theme.colors.cardBorder
           }}
         >
           <Ionicons
             name={item.photoSyncStatus === "failed" ? "cloud-offline-outline" : "cloud-upload-outline"}
-            color={item.photoSyncStatus === "failed" ? theme.colors.danger : theme.colors.gold}
+            color={item.photoSyncStatus === "failed" ? theme.colors.danger : theme.colors.primary}
             size={14}
           />
-          <Text style={{ color: item.photoSyncStatus === "failed" ? theme.colors.danger : theme.colors.gold, fontWeight: "900", fontSize: 12 }}>
+          <Text style={{ color: item.photoSyncStatus === "failed" ? theme.colors.danger : theme.colors.primary, fontWeight: "900", fontSize: 12 }}>
             {photoSyncCopy(item.photoSyncStatus)}
           </Text>
         </View>
@@ -188,45 +201,74 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
             paddingHorizontal: 10,
             paddingVertical: 6,
             borderRadius: theme.radius.pill,
-            backgroundColor: item.remoteSyncStatus === "failed" ? "rgba(255, 92, 92, 0.14)" : theme.colors.cardSoft,
+            backgroundColor: item.remoteSyncStatus === "failed" ? theme.colors.dangerSoft : theme.colors.surfaceAlt,
             borderWidth: 1,
-            borderColor: item.remoteSyncStatus === "failed" ? theme.colors.danger : theme.colors.border
+            borderColor: item.remoteSyncStatus === "failed" ? theme.colors.danger : theme.colors.cardBorder
           }}
         >
           <Ionicons
             name={item.remoteSyncStatus === "failed" ? "cloud-offline-outline" : "sync-outline"}
-            color={item.remoteSyncStatus === "failed" ? theme.colors.danger : theme.colors.gold}
+            color={item.remoteSyncStatus === "failed" ? theme.colors.danger : theme.colors.primary}
             size={14}
           />
-          <Text style={{ color: item.remoteSyncStatus === "failed" ? theme.colors.danger : theme.colors.gold, fontWeight: "900", fontSize: 12 }}>
-            {remoteSyncCopy(item.remoteSyncStatus)}
+          <Text style={{ color: item.remoteSyncStatus === "failed" ? theme.colors.danger : theme.colors.primary, fontWeight: "900", fontSize: 12 }}>
+            {item.remoteSyncStatus === "failed" && item.remoteSyncError ? item.remoteSyncError.slice(0, 64) : remoteSyncCopy(item.remoteSyncStatus)}
           </Text>
         </View>
       ) : null}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
         <View style={{ flex: 1, paddingRight: 10 }}>
-          <Text style={{ color: theme.colors.dim, fontSize: 12 }}>{placeLabel}</Text>
-          {showBrewery ? <Text style={{ color: theme.colors.dim, fontSize: 11, marginTop: 2 }}>{item.brewery}</Text> : null}
+          <Text style={{ color: theme.colors.textMuted, fontSize: 12 }}>{placeLabel}</Text>
+          {showBrewery ? <Text style={{ color: theme.colors.textMuted, fontSize: 11, marginTop: 2 }}>{item.brewery}</Text> : null}
         </View>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 6,
-            borderRadius: theme.radius.pill,
-            backgroundColor: reacted ? theme.colors.neonSoft : theme.colors.cardSoft
-          }}
-        >
-          <Pressable onPress={() => onReact?.(item.id)} hitSlop={8} style={{ paddingLeft: 10, paddingVertical: 6 }}>
-            <Ionicons name={reacted ? "heart" : "heart-outline"} color={reacted ? theme.colors.neon : theme.colors.muted} size={16} />
-          </Pressable>
-          <Pressable onPress={() => setLikersOpen(true)} hitSlop={8} style={{ paddingRight: 10, paddingVertical: 6, minWidth: 22 }}>
-            <Text style={{ color: reacted ? theme.colors.neon : theme.colors.muted, fontWeight: "800" }}>{item.reactions}</Text>
-          </Pressable>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+          {onAddComment && onDeleteComment ? <CommentButton count={item.comments.length} onPress={() => setCommentsOpen(true)} theme={theme} compact /> : null}
+          <View
+            style={{
+              height: 28,
+              minWidth: 42,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 4,
+              borderRadius: theme.radius.pill,
+              backgroundColor: theme.colors.card
+            }}
+          >
+            <Pressable onPress={() => onReact?.(item.id)} hitSlop={8} style={{ height: 28, justifyContent: "center", paddingLeft: 8 }}>
+              <Ionicons name={reacted ? "heart" : "heart-outline"} color={reacted ? theme.colors.error : theme.colors.textPrimary} size={14} />
+            </Pressable>
+            <Pressable onPress={() => setLikersOpen(true)} hitSlop={8} style={{ height: 28, justifyContent: "center", paddingRight: 8, minWidth: 18 }}>
+              <Text style={{ color: reacted ? theme.colors.error : theme.colors.textPrimary, fontWeight: "900", fontSize: 11 }}>{item.reactions}</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
-      <PhotoViewer visible={photoOpen && Boolean(photoSource) && !imageFailed} item={item} photoSource={photoSource} photoSize={photoSize} onClose={() => setPhotoOpen(false)} />
-      <LikersModal visible={likersOpen} reactionUsers={reactionUsers} onClose={() => setLikersOpen(false)} />
+      <PhotoViewer visible={photoOpen && Boolean(fullPhotoSource) && !imageFailed} photoSource={fullPhotoSource} onClose={() => setPhotoOpen(false)} />
+      <LikersModal visible={likersOpen} reactionUsers={reactionUsers} onClose={() => setLikersOpen(false)} theme={theme} />
+      {onAddComment && onDeleteComment ? (
+        <CommentsSheet
+          visible={commentsOpen}
+          checkIn={item}
+          currentUserId={currentUserId}
+          onAddComment={onAddComment}
+          onDeleteComment={onDeleteComment}
+          onReportComment={
+            onReportComment
+              ? ({ comment, reason, details }) =>
+                  onReportComment({
+                    checkInId: item.id,
+                    groupId: item.groupIds[0],
+                    comment,
+                    reason,
+                    details
+                  })
+              : undefined
+          }
+          onClose={() => setCommentsOpen(false)}
+          theme={theme}
+        />
+      ) : null}
       <EditCheckInModal
         visible={editOpen}
         item={item}
@@ -236,6 +278,14 @@ export function ActivityItem({ item, currentUserId, onReact, onEdit, onDelete, v
           setEditOpen(false);
         }}
       />
+    </Pressable>
+  );
+}
+
+function CaptionText({ text }: { text: string }) {
+  return (
+    <View style={{ marginTop: 13, borderRadius: theme.radius.md, backgroundColor: theme.colors.surfaceAlt, paddingHorizontal: 12, paddingVertical: 10 }}>
+      <Text style={{ color: theme.colors.textPrimary, fontSize: 15, lineHeight: 22, fontWeight: "700" }}>{text}</Text>
     </View>
   );
 }
@@ -252,78 +302,6 @@ function remoteSyncCopy(status: NonNullable<BeerCheckIn["remoteSyncStatus"]>) {
   return "Stamp queued";
 }
 
-function reactionUsersFor(item: BeerCheckIn, currentUserId: string): ReactionUser[] {
-  const usersById = new Map<string, ReactionUser>();
-  (item.reactionUsers ?? []).forEach((reactionUser) => {
-    usersById.set(reactionUser.id, reactionUser);
-  });
-  item.reactedBy.forEach((id) => {
-    if (!usersById.has(id)) {
-      usersById.set(id, {
-        id,
-        name: id === currentUserId ? "You" : "Pintly user",
-        avatar: id === currentUserId ? "YO" : "PU"
-      });
-    }
-  });
-  return Array.from(usersById.values());
-}
-
-function LikersModal({ visible, reactionUsers, onClose }: { visible: boolean; reactionUsers: ReactionUser[]; onClose: () => void }) {
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable
-        onPress={onClose}
-        style={{
-          flex: 1,
-          backgroundColor: "rgba(0,0,0,0.78)",
-          justifyContent: "flex-end"
-        }}
-      >
-        <Pressable
-          onPress={(event) => event.stopPropagation()}
-          style={{
-            backgroundColor: theme.colors.card,
-            borderTopLeftRadius: 28,
-            borderTopRightRadius: 28,
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-            padding: 20,
-            maxHeight: "62%"
-          }}
-        >
-          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-            <View>
-              <Text style={{ color: theme.colors.gold, fontWeight: "900", fontSize: 12, letterSpacing: 1.4 }}>LIKED BY</Text>
-              <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 24, fontFamily: "Georgia", marginTop: 2 }}>
-                {reactionUsers.length || "No"} {reactionUsers.length === 1 ? "person" : "people"}
-              </Text>
-            </View>
-            <Pressable onPress={onClose} hitSlop={8}>
-              <Ionicons name="close" color={theme.colors.text} size={26} />
-            </Pressable>
-          </View>
-
-          {reactionUsers.length ? (
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <View style={{ gap: 10, paddingBottom: 8 }}>
-                {reactionUsers.map((reactionUser) => (
-                  <View key={reactionUser.id} style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                    <Avatar label={reactionUser.avatar} uri={reactionUser.avatarUrl} size={38} />
-                    <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 16 }}>{reactionUser.name}</Text>
-                  </View>
-                ))}
-              </View>
-            </ScrollView>
-          ) : (
-            <Text style={{ color: theme.colors.muted, lineHeight: 20 }}>No likes yet.</Text>
-          )}
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
-}
-
 function PhotoThumb({ photoSource, imageFailed, onPress, onError }: { photoSource?: string; imageFailed: boolean; onPress: () => void; onError: () => void }) {
   if (photoSource && !imageFailed) {
     return (
@@ -338,14 +316,14 @@ function PhotoThumb({ photoSource, imageFailed, onPress, onError }: { photoSourc
         width: 48,
         height: 52,
         borderRadius: 9,
-        backgroundColor: theme.colors.cardSoft,
+        backgroundColor: theme.colors.surfaceAlt,
         alignItems: "center",
         justifyContent: "center",
         borderWidth: 1,
-        borderColor: theme.colors.border
+        borderColor: theme.colors.cardBorder
       }}
     >
-      <Ionicons name="beer-outline" color={theme.colors.gold} size={24} />
+      <Ionicons name="beer-outline" color={theme.colors.primary} size={24} />
     </View>
   );
 }
@@ -378,7 +356,7 @@ function PhotoPanel({
         borderRadius: theme.radius.lg,
         overflow: "hidden",
         borderWidth: 1,
-        borderColor: photoSource && !imageFailed ? theme.colors.neon : theme.colors.border,
+        borderColor: photoSource && !imageFailed ? theme.colors.primary : theme.colors.cardBorder,
         backgroundColor: theme.colors.surface,
         minHeight: 178
       }}
@@ -389,8 +367,8 @@ function PhotoPanel({
         </Pressable>
       ) : (
         <View style={{ minHeight: 178, alignItems: "center", justifyContent: "center", padding: 18 }}>
-          <Ionicons name="beer-outline" size={30} color={theme.colors.gold} />
-          <Text style={{ color: theme.colors.text, fontWeight: "900", marginTop: 10 }}>{photoSource ? "Photo could not load" : "No photo attached"}</Text>
+          <Ionicons name="beer-outline" size={30} color={theme.colors.primary} />
+          <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", marginTop: 10 }}>{photoSource ? "Photo could not load" : "No photo attached"}</Text>
         </View>
       )}
     </View>
@@ -420,33 +398,33 @@ function EditCheckInModal({
       <View style={{ flex: 1, backgroundColor: theme.colors.background, padding: 20 }}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
           <View>
-            <Text style={{ color: theme.colors.gold, fontSize: 12, fontWeight: "900", letterSpacing: 2 }}>EDIT LOG</Text>
-            <Text style={{ color: theme.colors.text, fontSize: 28, fontWeight: "900", fontFamily: "Georgia" }}>Beer Note</Text>
+            <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: "900", letterSpacing: 2 }}>EDIT LOG</Text>
+            <Text style={{ color: theme.colors.textPrimary, fontSize: 28, fontWeight: "900", fontFamily: "Georgia" }}>Beer Note</Text>
           </View>
           <Pressable onPress={onClose} style={{ padding: 8 }}>
-            <Ionicons name="close" color={theme.colors.text} size={28} />
+            <Ionicons name="close" color={theme.colors.textPrimary} size={28} />
           </Pressable>
         </View>
 
-        <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, padding: 14, gap: 6 }}>
-          <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 16 }}>1 beer counted</Text>
-          <Text style={{ color: theme.colors.muted, lineHeight: 20 }}>Beer logs are locked to one beer each. You can still update the note on this log.</Text>
+        <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.cardBorder, padding: 14, gap: 6 }}>
+          <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 16 }}>One photo stamp</Text>
+          <Text style={{ color: theme.colors.textSecondary, lineHeight: 20 }}>Each log counts as one beer. You can still update the note on this log.</Text>
         </View>
 
         <View style={{ marginTop: 14 }}>
-          <Text style={{ color: theme.colors.muted, fontWeight: "800", marginBottom: 7 }}>Note</Text>
+          <Text style={{ color: theme.colors.textSecondary, fontWeight: "800", marginBottom: 7 }}>Note</Text>
           <TextInput
             value={note}
             onChangeText={setNote}
             placeholder="Optional note"
-            placeholderTextColor={theme.colors.dim}
+            placeholderTextColor={theme.colors.textMuted}
             multiline
             style={{
               minHeight: 120,
-              color: theme.colors.text,
+              color: theme.colors.textPrimary,
               backgroundColor: theme.colors.card,
               borderWidth: 1,
-              borderColor: theme.colors.border,
+              borderColor: theme.colors.cardBorder,
               borderRadius: theme.radius.md,
               paddingHorizontal: 14,
               paddingVertical: 12,
@@ -457,9 +435,9 @@ function EditCheckInModal({
 
         <Pressable
           onPress={() => onSave({ quantity: 1, note })}
-          style={{ backgroundColor: theme.colors.neon, borderRadius: theme.radius.pill, paddingVertical: 16, alignItems: "center", marginTop: 18 }}
+          style={{ backgroundColor: theme.colors.primary, borderRadius: theme.radius.pill, paddingVertical: 16, alignItems: "center", marginTop: 18 }}
         >
-          <Text style={{ color: theme.colors.ink, fontWeight: "900", fontSize: 16 }}>Save Changes</Text>
+          <Text style={{ color: theme.colors.textOnPrimary, fontWeight: "900", fontSize: 16 }}>Save Changes</Text>
         </Pressable>
       </View>
     </Modal>
@@ -468,37 +446,12 @@ function EditCheckInModal({
 
 function PhotoViewer({
   visible,
-  item,
   photoSource,
-  photoSize,
   onClose
 }: {
   visible: boolean;
-  item: BeerCheckIn;
   photoSource?: string;
-  photoSize?: { width: number; height: number };
   onClose: () => void;
 }) {
-  const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
-  if (!photoSource) return null;
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable onPress={onClose} style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "center", padding: 16 }}>
-        <Pressable onPress={onClose} style={{ position: "absolute", top: 54, right: 22, zIndex: 2, padding: 8 }}>
-          <Ionicons name="close-circle" color={theme.colors.text} size={34} />
-        </Pressable>
-        <Pressable
-          onPress={(event) => event.stopPropagation()}
-          onLayout={(event) => {
-            const { width, height } = event.nativeEvent.layout;
-            setPreviewSize({ width, height });
-          }}
-          style={{ width: "100%", aspectRatio: 3 / 4, borderRadius: theme.radius.lg, overflow: "hidden" }}
-        >
-          <Image source={{ uri: photoSource }} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
+  return <ZoomablePhotoModal visible={visible} uri={photoSource} onClose={onClose} theme={theme} />;
 }

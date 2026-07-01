@@ -1,3 +1,7 @@
-const { getDefaultConfig } = require("expo/metro-config");
+const { getSentryExpoConfig } = require("@sentry/react-native/metro");
 
-module.exports = getDefaultConfig(__dirname);
+const config = getSentryExpoConfig(__dirname);
+
+delete config.watcher?.unstable_workerThreads;
+
+module.exports = config;

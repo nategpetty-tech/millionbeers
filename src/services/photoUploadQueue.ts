@@ -6,6 +6,9 @@ type QueuedUpload = {
   checkInId: string;
   localUri: string;
   userId: string;
+  width?: number;
+  height?: number;
+  groupIds?: string[];
   attempts: number;
   nextAttemptAt: number;
   createdAt: number;
@@ -17,6 +20,9 @@ type UploadSuccess = {
   photoStoragePath: string;
   photoThumbnailUrl?: string;
   photoThumbnailStoragePath?: string;
+  photoCloudflareImageId?: string;
+  photoImageWidth?: number;
+  photoImageHeight?: number;
 };
 
 type UploadFailure = {
@@ -57,7 +63,7 @@ export function startPhotoUploadQueueLifecycle() {
   };
 }
 
-export async function enqueuePhotoUpload(input: { checkInId: string; localUri: string; userId: string }) {
+export async function enqueuePhotoUpload(input: { checkInId: string; localUri: string; userId: string; width?: number; height?: number; groupIds?: string[] }) {
   const queue = await readQueue();
   const existing = queue.find((item) => item.checkInId === input.checkInId);
   const now = Date.now();
@@ -68,6 +74,9 @@ export async function enqueuePhotoUpload(input: { checkInId: string; localUri: s
               ...item,
               localUri: input.localUri,
               userId: input.userId,
+              width: input.width,
+              height: input.height,
+              groupIds: input.groupIds,
               nextAttemptAt: now
             }
           : item
@@ -78,6 +87,9 @@ export async function enqueuePhotoUpload(input: { checkInId: string; localUri: s
           checkInId: input.checkInId,
           localUri: input.localUri,
           userId: input.userId,
+          width: input.width,
+          height: input.height,
+          groupIds: input.groupIds,
           attempts: 0,
           nextAttemptAt: now,
           createdAt: now
@@ -102,13 +114,16 @@ export async function processPhotoUploadQueue() {
     for (const item of ready) {
       try {
         onStartHandler?.({ checkInId: item.checkInId });
-        const uploaded = await uploadCheckInPhoto(item.localUri, item.userId);
+        const uploaded = await uploadCheckInPhoto(item.localUri, item.userId, item.checkInId, { width: item.width, height: item.height }, item.groupIds);
         await onSuccessHandler?.({
           checkInId: item.checkInId,
           photoUrl: uploaded.signedUrl,
           photoStoragePath: uploaded.storagePath,
           photoThumbnailUrl: uploaded.thumbnailSignedUrl,
-          photoThumbnailStoragePath: uploaded.thumbnailStoragePath
+          photoThumbnailStoragePath: uploaded.thumbnailStoragePath,
+          photoCloudflareImageId: uploaded.cloudflareImageId,
+          photoImageWidth: uploaded.width,
+          photoImageHeight: uploaded.height
         });
         queue = queue.filter((queued) => queued.checkInId !== item.checkInId);
         await writeQueue(queue);

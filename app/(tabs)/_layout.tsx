@@ -1,11 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { Tabs } from "expo-router";
 import { useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 import { CheckInModal } from "@/components/CheckInModal";
 import { friendsFeatureEnabled } from "@/config/features";
 import { usePassport } from "@/store/passportStore";
-import { theme } from "@/theme";
+import { useAppTheme } from "@/theme";
 
 type IconName = keyof typeof Ionicons.glyphMap;
 
@@ -18,6 +19,8 @@ const icons: Record<string, IconName> = {
 };
 
 export default function TabsLayout() {
+  const theme = useAppTheme();
+  const router = useRouter();
   const [checkInOpen, setCheckInOpen] = useState(false);
   const { groups, friendRequests, user } = usePassport();
   const pendingJoinRequests = useMemo(
@@ -38,14 +41,21 @@ export default function TabsLayout() {
       <Tabs
         screenOptions={({ route }) => ({
           headerShown: false,
-          tabBarActiveTintColor: theme.colors.neon,
-          tabBarInactiveTintColor: theme.colors.muted,
+          tabBarActiveTintColor: theme.colors.tabActive,
+          tabBarInactiveTintColor: theme.colors.tabInactive,
           tabBarStyle: {
-            backgroundColor: theme.colors.surface,
-            borderTopColor: theme.colors.border,
+            position: "absolute",
+            backgroundColor: theme.mode === "light" ? theme.colors.surface : theme.colors.surface,
+            borderTopColor: theme.colors.cardBorder,
+            borderTopWidth: 1,
             height: 82,
             paddingTop: 8,
-            paddingBottom: 14
+            paddingBottom: 14,
+            shadowColor: theme.colors.shadow,
+            shadowOpacity: theme.mode === "light" ? 1 : 0,
+            shadowRadius: theme.mode === "light" ? 16 : 0,
+            shadowOffset: { width: 0, height: -5 },
+            elevation: theme.mode === "light" ? 14 : 0
           },
           tabBarLabelStyle: {
             fontSize: 11,
@@ -84,17 +94,17 @@ export default function TabsLayout() {
                     borderRadius: 32,
                     alignItems: "center",
                     justifyContent: "center",
-                    backgroundColor: theme.colors.neon,
+                    backgroundColor: theme.colors.primary,
                     borderWidth: 4,
                     borderColor: theme.colors.background,
-                    shadowColor: "#000",
-                    shadowOpacity: 0.34,
-                    shadowRadius: 12,
+                    shadowColor: theme.colors.primary,
+                    shadowOpacity: theme.mode === "light" ? 0.28 : 0.2,
+                    shadowRadius: 14,
                     shadowOffset: { width: 0, height: 8 },
                     elevation: 8
                   }}
                 >
-                  <Ionicons name="add" color={theme.colors.ink} size={34} />
+                  <Ionicons name="add" color={theme.colors.textOnPrimary} size={34} />
                 </View>
               </Pressable>
             )
@@ -102,17 +112,22 @@ export default function TabsLayout() {
         />
         <Tabs.Screen
           name="groups"
+          listeners={{
+            tabPress: (event) => {
+              event.preventDefault();
+              router.replace("/groups");
+            }
+          }}
           options={{
             title: "Groups",
             tabBarBadge: pendingJoinRequests || undefined,
             tabBarBadgeStyle: {
-              backgroundColor: theme.colors.gold,
-              color: theme.colors.ink,
+              backgroundColor: theme.colors.primary,
+              color: theme.colors.textOnPrimary,
               fontWeight: "900"
             }
           }}
         />
-        <Tabs.Screen name="groups/join" options={{ href: null }} />
         <Tabs.Screen name="challenges" options={{ href: null }} />
         <Tabs.Screen
           name="friends"
@@ -121,8 +136,8 @@ export default function TabsLayout() {
             href: friendsFeatureEnabled ? undefined : null,
             tabBarBadge: incomingFriendRequests || undefined,
             tabBarBadgeStyle: {
-              backgroundColor: theme.colors.gold,
-              color: theme.colors.ink,
+              backgroundColor: theme.colors.primary,
+              color: theme.colors.textOnPrimary,
               fontWeight: "900"
             }
           }}

@@ -14,6 +14,8 @@ Update this table after every EAS production build and again after Apple/TestFli
 | 2026-06-14 | TBD | 1.0.0 | 8 | production | TBD | TBD | TBD | Not submitted | Release-candidate fix so remote account history is not discarded when noncritical social/group snapshot queries fail. |
 | 2026-06-14 | TBD | 1.0.0 | 9 | production | TBD | TBD | TBD | Not submitted | Release-candidate fix to always merge owner-scoped check-ins and memberships into the account snapshot so personal history does not depend on shared feed queries. |
 | 2026-06-14 | TBD | 1.0.0 | 10 | production | TBD | TBD | TBD | Not submitted | Release-candidate fix to re-bind stale local passport cache to the authenticated Supabase user id before restoring cloud history. |
+| 2026-06-21 | Uncommitted dirty workspace | 1.0.0 | 22 | production | [caa2ed25-bf2b-4542-a0b1-e6ee9d946256](https://expo.dev/accounts/nategpetty/projects/pintly/builds/caa2ed25-bf2b-4542-a0b1-e6ee9d946256) | No | Canceled | Not submitted | Canceled before completion. Internal candidate prep included native expo-notifications, venue detection, group log pushes, zoomable photos, member-profile polish, and build 22 metadata. Apply venue API grant migration before testing venue cache writes. |
+| 2026-06-27 | Uncommitted dirty workspace | 1.0.1 | 25 | production | TBD | No | Not built | Not submitted | Official App Store update candidate prepared with recent profile polish, venue/logging fixes, group milestones, milestone progress, and app-wide liker lists. |
 
 ## Status Definitions
 

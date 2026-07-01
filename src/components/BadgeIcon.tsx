@@ -18,14 +18,14 @@ export function BadgeIcon({ icon = "star", label, size = 48 }: Props) {
           borderRadius: size / 2,
           alignItems: "center",
           justifyContent: "center",
-          backgroundColor: theme.colors.gold,
+          backgroundColor: theme.colors.primary,
           borderWidth: 2,
-          borderColor: theme.colors.amber
+          borderColor: theme.colors.primaryDark
         }}
       >
-        <Ionicons name={(icon as keyof typeof Ionicons.glyphMap) || "star"} size={Math.round(size * 0.48)} color={theme.colors.ink} />
+        <Ionicons name={(icon as keyof typeof Ionicons.glyphMap) || "star"} size={Math.round(size * 0.48)} color={theme.colors.textOnPrimary} />
       </View>
-      {label ? <Text style={{ color: theme.colors.muted, fontSize: 11, maxWidth: 80, textAlign: "center" }}>{label}</Text> : null}
+      {label ? <Text style={{ color: theme.colors.textSecondary, fontSize: 11, maxWidth: 80, textAlign: "center" }}>{label}</Text> : null}
     </View>
   );
 }

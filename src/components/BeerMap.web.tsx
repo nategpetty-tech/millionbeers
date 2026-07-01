@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, Text, View } from "react-native";
-import { theme } from "@/theme";
+import { useAppTheme } from "@/theme";
 import type { BeerMapPin } from "./BeerMap.types";
 
 type Props = {
@@ -10,26 +10,31 @@ type Props = {
 };
 
 export function BeerMap({ pins, selectedId, onSelect }: Props) {
+  const theme = useAppTheme();
+
   return (
     <View
       style={{
         height: 360,
         borderRadius: 28,
-        backgroundColor: "#111713",
+        backgroundColor: theme.colors.mapPreviewBackground,
         borderWidth: 1,
-        borderColor: theme.colors.border,
+        borderColor: theme.colors.cardBorder,
         overflow: "hidden"
       }}
     >
-      <MapGrid />
-      <Text style={{ position: "absolute", top: 18, left: 18, color: theme.colors.gold, fontWeight: "900", letterSpacing: 1 }}>
+      <MapGrid color={theme.colors.mapGrid} />
+      <Text style={{ position: "absolute", top: 18, left: 18, color: theme.colors.primary, fontWeight: "900", letterSpacing: 1 }}>
         WEB MAP PREVIEW
       </Text>
-      <Text style={{ position: "absolute", top: 38, left: 18, color: theme.colors.muted, fontSize: 12 }}>
+      <Text style={{ position: "absolute", top: 38, left: 18, color: theme.colors.textSecondary, fontSize: 12 }}>
         Native Apple/Google map appears in Expo Go
       </Text>
       {pins.map((pin, index) => {
         const active = selectedId === pin.id;
+        const markerColor = active ? theme.colors.accent : theme.colors.accentSoft;
+        const iconColor = active ? theme.colors.textOnPrimary : theme.colors.accent;
+        const markerSize = active ? 42 : 34;
         const x = 28 + ((index * 23) % 48);
         const y = 24 + ((index * 19) % 50);
         return (
@@ -40,23 +45,27 @@ export function BeerMap({ pins, selectedId, onSelect }: Props) {
               position: "absolute",
               left: `${x}%`,
               top: `${y}%`,
-              transform: [{ translateX: -18 }, { translateY: -18 }],
+              transform: [{ translateX: -18 }, { translateY: -42 }],
               alignItems: "center"
             }}
           >
             <View
               style={{
-                width: active ? 44 : 34,
-                height: active ? 44 : 34,
-                borderRadius: active ? 22 : 17,
+                width: markerSize,
+                height: markerSize,
+                borderTopLeftRadius: markerSize / 2,
+                borderTopRightRadius: markerSize / 2,
+                borderBottomLeftRadius: markerSize / 2,
+                borderBottomRightRadius: 8,
                 alignItems: "center",
                 justifyContent: "center",
-                backgroundColor: active ? theme.colors.neon : theme.colors.neonSoft,
+                backgroundColor: markerColor,
                 borderWidth: 2,
-                borderColor: active ? theme.colors.text : theme.colors.neon
+                borderColor: active ? theme.colors.accent : theme.colors.cardBorder,
+                transform: [{ rotate: "45deg" }]
               }}
             >
-              <Ionicons name="beer-outline" color={active ? theme.colors.ink : theme.colors.neon} size={active ? 22 : 18} />
+              <Ionicons name="beer-outline" color={iconColor} size={active ? 22 : 18} style={{ transform: [{ rotate: "-45deg" }] }} />
             </View>
           </Pressable>
         );
@@ -65,15 +74,15 @@ export function BeerMap({ pins, selectedId, onSelect }: Props) {
   );
 }
 
-function MapGrid() {
+function MapGrid({ color }: { color: string }) {
   return (
     <>
-      <View style={{ position: "absolute", left: 0, right: 0, top: 92, height: 2, backgroundColor: "#253126" }} />
-      <View style={{ position: "absolute", left: 0, right: 0, top: 185, height: 2, backgroundColor: "#253126" }} />
-      <View style={{ position: "absolute", left: 0, right: 0, top: 292, height: 2, backgroundColor: "#253126" }} />
-      <View style={{ position: "absolute", top: 0, bottom: 0, left: "32%", width: 2, backgroundColor: "#253126" }} />
-      <View style={{ position: "absolute", top: 0, bottom: 0, left: "55%", width: 2, backgroundColor: "#253126" }} />
-      <View style={{ position: "absolute", top: 0, bottom: 0, left: "74%", width: 2, backgroundColor: "#253126" }} />
+      <View style={{ position: "absolute", left: 0, right: 0, top: 92, height: 2, backgroundColor: color }} />
+      <View style={{ position: "absolute", left: 0, right: 0, top: 185, height: 2, backgroundColor: color }} />
+      <View style={{ position: "absolute", left: 0, right: 0, top: 292, height: 2, backgroundColor: color }} />
+      <View style={{ position: "absolute", top: 0, bottom: 0, left: "32%", width: 2, backgroundColor: color }} />
+      <View style={{ position: "absolute", top: 0, bottom: 0, left: "55%", width: 2, backgroundColor: color }} />
+      <View style={{ position: "absolute", top: 0, bottom: 0, left: "74%", width: 2, backgroundColor: color }} />
     </>
   );
 }

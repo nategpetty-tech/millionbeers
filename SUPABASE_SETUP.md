@@ -9,9 +9,7 @@ Copy these public client values into a local `.env` file:
 ```sh
 EXPO_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
 EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-or-anon-key
-EXPO_PUBLIC_SUPABASE_PHOTO_BUCKET=beer-photos
-EXPO_PUBLIC_SUPABASE_PROFILE_PHOTO_BUCKET=profile-photos
-EXPO_PUBLIC_SUPABASE_GROUP_BACKDROP_BUCKET=group-backdrops
+EXPO_PUBLIC_CLOUDFLARE_IMAGES_ACCOUNT_HASH=your-cloudflare-images-account-hash
 ```
 
 The app also supports `EXPO_PUBLIC_SUPABASE_ANON_KEY` if your dashboard labels the public client key that way.
@@ -29,59 +27,7 @@ For friend testing, decide whether email confirmation should be required:
 
 ## 3. Storage
 
-Create three private Storage buckets:
-
-- `beer-photos` for beer check-in photos.
-- `profile-photos` for user profile pictures.
-- `group-backdrops` for custom group hero images.
-
-Pintly uploads photos to private storage and creates short-lived signed URLs for rendering inside the app.
-
-After the buckets exist, add these policies in the Supabase SQL Editor:
-
-```sql
-drop policy if exists "authenticated users can upload beer photos" on storage.objects;
-create policy "authenticated users can upload beer photos"
-on storage.objects
-for insert
-to authenticated
-with check (bucket_id = 'beer-photos');
-
-drop policy if exists "authenticated users can read beer photos" on storage.objects;
-create policy "authenticated users can read beer photos"
-on storage.objects
-for select
-to authenticated
-using (bucket_id = 'beer-photos');
-
-drop policy if exists "authenticated users can upload profile photos" on storage.objects;
-create policy "authenticated users can upload profile photos"
-on storage.objects
-for insert
-to authenticated
-with check (bucket_id = 'profile-photos');
-
-drop policy if exists "authenticated users can read profile photos" on storage.objects;
-create policy "authenticated users can read profile photos"
-on storage.objects
-for select
-to authenticated
-using (bucket_id = 'profile-photos');
-
-drop policy if exists "authenticated users can upload group backdrops" on storage.objects;
-create policy "authenticated users can upload group backdrops"
-on storage.objects
-for insert
-to authenticated
-with check (bucket_id = 'group-backdrops');
-
-drop policy if exists "authenticated users can read group backdrops" on storage.objects;
-create policy "authenticated users can read group backdrops"
-on storage.objects
-for select
-to authenticated
-using (bucket_id = 'group-backdrops');
-```
+Pintly uses Cloudflare Images for user-uploaded photos. Supabase stores metadata only. See `SUPABASE_STORAGE.md` for Cloudflare setup, Edge Function secrets, and the upload flow.
 
 ## 4. Shared App Data
 
@@ -106,7 +52,18 @@ supabase secrets set OPENAI_VISION_MODEL=gpt-4o-mini
 
 Keep `OPENAI_API_KEY` out of Expo `.env` files. The mobile app calls the Supabase function, and the function calls OpenAI from the server side.
 
-## 6. Restart Expo
+## 6. Venue Suggestions
+
+Deploy the nearby venue Edge Function and set the Foursquare key as a Supabase secret:
+
+```sh
+supabase functions deploy search-nearby-venues
+supabase secrets set FOURSQUARE_API_KEY=your-foursquare-places-api-key
+```
+
+Keep `FOURSQUARE_API_KEY` out of Expo `.env` files. The app sends only GPS coordinates to the Supabase function.
+
+## 7. Restart Expo
 
 Expo reads public env vars at bundle time. After editing `.env`, restart the dev server:
 

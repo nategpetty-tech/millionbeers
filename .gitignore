@@ -2,6 +2,11 @@ node_modules/
 .expo/
 dist/
 web-build/
+app-store-previews/build*-web/
+app-store-previews/build*-web-demo/
+supabase/.temp/
+.agents/
+skills-lock.json
 .DS_Store
 npm-debug.log*
 .env

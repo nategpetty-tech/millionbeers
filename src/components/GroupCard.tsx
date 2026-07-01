@@ -3,7 +3,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image, Pressable, Text, View } from "react-native";
 import { Group } from "@/types";
 import { theme } from "@/theme";
-import { formatNumber, percent } from "@/utils/format";
+import { formatNumber } from "@/utils/format";
+import { getGroupMilestoneProgress } from "@/utils/groupMilestones";
 import { groupPhotoFor } from "@/utils/groupVisuals";
 import { ProgressBar } from "./ProgressBar";
 
@@ -14,6 +15,7 @@ type Props = {
 
 export function GroupCard({ group, pendingRequestCount = 0 }: Props) {
   const groupImage = group.backdropUrl ?? groupPhotoFor(group.name);
+  const milestoneProgress = getGroupMilestoneProgress(group.beerCount);
   return (
     <Link href={`/groups/${group.id}`} asChild>
       <Pressable
@@ -21,10 +23,11 @@ export function GroupCard({ group, pendingRequestCount = 0 }: Props) {
           opacity: pressed ? 0.82 : 1,
           backgroundColor: theme.colors.card,
           borderWidth: 1,
-          borderColor: theme.colors.border,
+          borderColor: theme.colors.cardBorder,
           borderRadius: theme.radius.lg,
           padding: 16,
-          marginBottom: 12
+          marginBottom: 12,
+          ...theme.shadow.card
         })}
       >
         <View style={{ flexDirection: "row", gap: 14, alignItems: "center" }}>
@@ -35,15 +38,15 @@ export function GroupCard({ group, pendingRequestCount = 0 }: Props) {
               borderRadius: 29,
               overflow: "hidden",
               borderWidth: 1,
-              borderColor: theme.colors.border,
-              backgroundColor: theme.colors.cardSoft
+              borderColor: theme.colors.cardBorder,
+              backgroundColor: theme.colors.surfaceAlt
             }}
           >
             <Image source={{ uri: groupImage }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: "900", flex: 1 }}>{group.name}</Text>
-            <Text style={{ color: theme.colors.muted, marginTop: 4 }}>
+            <Text style={{ color: theme.colors.textPrimary, fontSize: 15, fontWeight: "900", flex: 1 }}>{group.name}</Text>
+            <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>
               {group.memberCount} members • {formatNumber(group.beerCount)} beers
             </Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
@@ -52,16 +55,18 @@ export function GroupCard({ group, pendingRequestCount = 0 }: Props) {
               {pendingRequestCount ? <Pill icon="person-add-outline" text={`${pendingRequestCount} request${pendingRequestCount === 1 ? "" : "s"}`} accent /> : null}
             </View>
             <View style={{ marginTop: 10 }}>
-              <ProgressBar current={group.beerCount} goal={group.goal} />
-              <Text style={{ color: theme.colors.dim, marginTop: 6, fontSize: 12 }}>
-                {percent(group.beerCount, group.goal)}% toward {formatNumber(group.goal)}
+              <ProgressBar current={milestoneProgress.current} goal={milestoneProgress.target} />
+              <Text style={{ color: theme.colors.textMuted, marginTop: 6, fontSize: 12 }}>
+                {milestoneProgress.completed
+                  ? "All milestone tiers complete"
+                  : `${formatNumber(group.beerCount)} / ${formatNumber(milestoneProgress.target)} beers to next badge`}
               </Text>
             </View>
           </View>
           <View style={{ alignItems: "flex-end" }}>
-            <Text style={{ color: theme.colors.neon, fontFamily: "Georgia", fontSize: 26, fontWeight: "900" }}>{formatNumber(group.beerCount)}</Text>
-            <Text style={{ color: theme.colors.muted, fontSize: 10, fontWeight: "900" }}>BEERS</Text>
-            <Ionicons name="chevron-forward" color={theme.colors.dim} size={18} style={{ marginTop: 8 }} />
+            <Text style={{ color: theme.colors.primary, fontFamily: "Georgia", fontSize: 26, fontWeight: "900" }}>{formatNumber(group.beerCount)}</Text>
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 10, fontWeight: "900" }}>BEERS</Text>
+            <Ionicons name="chevron-forward" color={theme.colors.textMuted} size={18} style={{ marginTop: 8 }} />
           </View>
         </View>
       </Pressable>
@@ -76,14 +81,14 @@ function Pill({ icon, text, accent = false }: { icon: keyof typeof Ionicons.glyp
         flexDirection: "row",
         alignItems: "center",
         gap: 4,
-        backgroundColor: accent ? theme.colors.gold : theme.colors.surface,
+        backgroundColor: accent ? theme.colors.primary : theme.colors.surface,
         borderRadius: theme.radius.pill,
         paddingHorizontal: 8,
         paddingVertical: 5
       }}
     >
-      <Ionicons name={icon} color={accent ? theme.colors.ink : theme.colors.muted} size={12} />
-      <Text style={{ color: accent ? theme.colors.ink : theme.colors.muted, fontSize: 11, fontWeight: "900" }}>{text}</Text>
+      <Ionicons name={icon} color={accent ? theme.colors.textOnPrimary : theme.colors.textSecondary} size={12} />
+      <Text style={{ color: accent ? theme.colors.textOnPrimary : theme.colors.textSecondary, fontSize: 11, fontWeight: "900" }}>{text}</Text>
     </View>
   );
 }

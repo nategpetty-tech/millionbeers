@@ -20,24 +20,25 @@ export function EmptyState({ title, body, icon = "beer-outline", actionLabel, on
         borderRadius: theme.radius.lg,
         backgroundColor: theme.colors.card,
         borderWidth: 1,
-        borderColor: theme.colors.border
+        borderColor: theme.colors.cardBorder,
+        ...theme.shadow.card
       }}
     >
-      <Ionicons name={icon} color={theme.colors.gold} size={34} />
-      <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 18, marginTop: 10 }}>{title}</Text>
-      <Text style={{ color: theme.colors.muted, textAlign: "center", marginTop: 6, lineHeight: 20 }}>{body}</Text>
+      <Ionicons name={icon} color={theme.colors.primary} size={34} />
+      <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 18, marginTop: 10 }}>{title}</Text>
+      <Text style={{ color: theme.colors.textSecondary, textAlign: "center", marginTop: 6, lineHeight: 20 }}>{body}</Text>
       {actionLabel && onAction ? (
         <Pressable
           onPress={onAction}
           style={{
-            backgroundColor: theme.colors.neon,
+            backgroundColor: theme.colors.primary,
             borderRadius: theme.radius.pill,
             paddingHorizontal: 16,
             paddingVertical: 10,
             marginTop: 16
           }}
         >
-          <Text style={{ color: theme.colors.ink, fontWeight: "900" }}>{actionLabel}</Text>
+          <Text style={{ color: theme.colors.textOnPrimary, fontWeight: "900" }}>{actionLabel}</Text>
         </Pressable>
       ) : null}
     </View>

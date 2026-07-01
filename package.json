@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "main": "expo-router/entry",
+  "engines": {
+    "node": ">=20.19.4 <24"
+  },
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
@@ -10,14 +13,16 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "release:info": "node scripts/print-release-info.js",
-    "release:check": "npm run typecheck && npx expo install --check",
+    "release:check": "node scripts/check-release-env.js && npm run typecheck && npx expo install --check",
     "release:doctor": "npx expo-doctor",
     "release:ios-build": "npx eas-cli@latest build --platform ios --profile production",
-    "storage:backfill-thumbnails": "node scripts/backfill-photo-thumbnails.js"
+    "storage:backfill-thumbnails": "node scripts/backfill-photo-thumbnails.js",
+    "storage:backfill-cloudflare": "node scripts/backfill-cloudflare-images.js"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@sentry/react-native": "~7.2.0",
     "@supabase/supabase-js": "^2.107.0",
     "expo": "^54.0.0",
     "expo-asset": "~12.0.13",
@@ -30,8 +35,10 @@
     "expo-linear-gradient": "~15.0.8",
     "expo-linking": "~8.0.12",
     "expo-location": "~19.0.8",
+    "expo-notifications": "~0.32.17",
     "expo-router": "~6.0.24",
     "expo-status-bar": "~3.0.9",
+    "expo-updates": "~29.0.18",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
@@ -40,6 +47,7 @@
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
+    "react-native-svg": "15.12.1",
     "react-native-url-polyfill": "^3.0.0",
     "react-native-web": "^0.21.0",
     "react-native-worklets": "0.5.1"

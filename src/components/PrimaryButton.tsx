@@ -14,17 +14,18 @@ export function PrimaryButton({ label, icon = "camera-outline", onPress }: Props
       onPress={onPress}
       style={({ pressed }) => ({
         opacity: pressed ? 0.84 : 1,
-        backgroundColor: theme.colors.neon,
-        borderRadius: theme.radius.sm,
+        backgroundColor: theme.colors.primary,
+        borderRadius: theme.radius.md,
         paddingVertical: 14,
         alignItems: "center",
         flexDirection: "row",
         justifyContent: "center",
-        gap: 8
+        gap: 8,
+        ...theme.shadow.button
       })}
     >
-      <Ionicons name={icon} color={theme.colors.ink} size={22} />
-      <Text style={{ color: theme.colors.ink, fontSize: 16, fontWeight: "900" }}>{label}</Text>
+      <Ionicons name={icon} color={theme.colors.textOnPrimary} size={22} />
+      <Text style={{ color: theme.colors.textOnPrimary, fontSize: 16, fontWeight: "900" }}>{label}</Text>
     </Pressable>
   );
 }

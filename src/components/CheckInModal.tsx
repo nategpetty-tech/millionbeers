@@ -2,12 +2,14 @@ import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
-import { Alert, Image, Keyboard, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Image, Keyboard, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { compressBeerPhoto } from "@/services/photoCompression";
 import { isPhotoStorageConfigured } from "@/services/photoStorage";
 import { enqueuePhotoUpload } from "@/services/photoUploadQueue";
+import { searchNearbyVenues } from "@/services/venues";
 import { usePassport } from "@/store/passportStore";
 import { theme } from "@/theme";
+import { CheckInVenueProvider, VenueCandidate, VenueConfirmationStatus, VenueSelectionStatus } from "@/types";
 
 type Props = {
   visible: boolean;
@@ -16,7 +18,15 @@ type Props = {
 };
 
 const emptyGroupIds: string[] = [];
-const previewHeight = 210;
+const previewHeight = 168;
+const locationLookupTimeoutMs = 8000;
+const fallbackLocationLookupTimeoutMs = 3500;
+const venueLookupTimeoutMs = 9000;
+const maxLastKnownLocationAgeMs = 1000 * 60 * 5;
+const maxLastKnownLocationAccuracyMeters = 250;
+
+type VenueLookupStatus = "idle" | "loading" | "suggested" | "confirmed" | "skipped" | "unavailable" | "error";
+type VenueUnavailableReason = "permission" | "no_venues" | "lookup";
 
 export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds }: Props) {
   const { checkInBeer, groups, user } = usePassport();
@@ -31,7 +41,16 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
   const [cameraOpening, setCameraOpening] = useState(false);
   const [photoMessage, setPhotoMessage] = useState("");
   const [selectedGroups, setSelectedGroups] = useState<string[]>(defaultGroupIds);
+  const [venueStatus, setVenueStatus] = useState<VenueLookupStatus>("idle");
+  const [venueCandidates, setVenueCandidates] = useState<VenueCandidate[]>([]);
+  const [suggestedVenue, setSuggestedVenue] = useState<VenueCandidate | null>(null);
+  const [confirmedVenue, setConfirmedVenue] = useState<VenueCandidate | null>(null);
+  const [venueSelectionStatus, setVenueSelectionStatus] = useState<VenueSelectionStatus | null>(null);
+  const [userExplicitlySkippedVenue, setUserExplicitlySkippedVenue] = useState(false);
+  const [venuePickerOpen, setVenuePickerOpen] = useState(false);
+  const [venueUnavailableReason, setVenueUnavailableReason] = useState<VenueUnavailableReason | null>(null);
   const cameraLaunchedForSession = useRef(false);
+  const venueSearchId = useRef(0);
   const canSubmit = uploadStatus !== "uploading" && !cameraOpening && Boolean(photoUri);
 
   function automaticGroupIds() {
@@ -47,7 +66,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
 
     if (visible) {
       reset();
-      void captureLocation();
+      void detectNearbyVenue();
       if (!cameraLaunchedForSession.current) {
         cameraLaunchedForSession.current = true;
         const timer = setTimeout(() => {
@@ -70,41 +89,12 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
     setCameraOpening(false);
     setPhotoMessage("");
     setSelectedGroups(automaticGroupIds());
+    resetVenueSelection();
   }
 
   function closeModal() {
     reset();
     onClose();
-  }
-
-  async function captureLocation() {
-    try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (!permission.granted) {
-        return;
-      }
-      const position = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced
-      });
-      setCoordinates({
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude
-      });
-      try {
-        const places = await Location.reverseGeocodeAsync({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude
-        });
-        const place = places[0];
-        if (place?.city) setCity((current) => current || place.city || "");
-        if (place?.region) setState((current) => current || place.region || "");
-        if (place?.country) setCountry((current) => current || place.country || "");
-      } catch {
-        // Coordinates are still useful even when reverse geocoding is unavailable.
-      }
-    } catch {
-      // Check-ins still work without location.
-    }
   }
 
   async function openCamera() {
@@ -180,6 +170,130 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
     );
   }
 
+  function resetVenueSelection() {
+    venueSearchId.current += 1;
+    setVenueStatus("idle");
+    setVenueCandidates([]);
+    setSuggestedVenue(null);
+    setConfirmedVenue(null);
+    setVenueSelectionStatus(null);
+    setUserExplicitlySkippedVenue(false);
+    setVenuePickerOpen(false);
+    setVenueUnavailableReason(null);
+  }
+
+  async function detectNearbyVenue() {
+    const searchId = venueSearchId.current + 1;
+    venueSearchId.current = searchId;
+    setVenueStatus("loading");
+    setVenueCandidates([]);
+    setSuggestedVenue(null);
+    setConfirmedVenue(null);
+    setVenueSelectionStatus(null);
+    setUserExplicitlySkippedVenue(false);
+    setVenueUnavailableReason(null);
+
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (!permission.granted) {
+        if (venueSearchId.current === searchId) {
+          setVenueUnavailableReason("permission");
+          setVenueStatus("unavailable");
+        }
+        return;
+      }
+
+      const position = await getBeerLogPosition();
+      if (venueSearchId.current !== searchId) return;
+
+      const nextCoordinates = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude
+      };
+      setCoordinates(nextCoordinates);
+      void fillReverseGeocode(nextCoordinates);
+
+      const candidates = await withTimeout(searchNearbyVenues(nextCoordinates), venueLookupTimeoutMs, "Venue lookup timed out.");
+      if (venueSearchId.current !== searchId) return;
+
+      const autoSuggestedVenue = autoSuggestedVenueCandidate(candidates);
+      setVenueCandidates(candidates);
+      setSuggestedVenue(autoSuggestedVenue);
+      setVenueUnavailableReason(candidates[0] ? null : "no_venues");
+      setVenueStatus(candidates[0] ? "suggested" : "unavailable");
+    } catch {
+      if (venueSearchId.current === searchId) {
+        setVenueUnavailableReason("lookup");
+        setVenueStatus("error");
+      }
+    }
+  }
+
+  async function getBeerLogPosition() {
+    try {
+      return await withTimeout(
+        Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Highest
+        }),
+        locationLookupTimeoutMs,
+        "Location lookup timed out."
+      );
+    } catch (locationError) {
+      const lastKnownPosition = await withTimeout(
+        Location.getLastKnownPositionAsync({
+          maxAge: maxLastKnownLocationAgeMs,
+          requiredAccuracy: maxLastKnownLocationAccuracyMeters
+        }),
+        fallbackLocationLookupTimeoutMs,
+        "Fallback location lookup timed out."
+      ).catch(() => null);
+
+      if (lastKnownPosition) return lastKnownPosition;
+      throw locationError;
+    }
+  }
+
+  async function fillReverseGeocode(nextCoordinates: { latitude: number; longitude: number }) {
+    try {
+      const places = await Location.reverseGeocodeAsync(nextCoordinates);
+      const place = places[0];
+      if (place?.city) setCity((current) => current || place.city || "");
+      if (place?.region) setState((current) => current || place.region || "");
+      if (place?.country) setCountry((current) => current || place.country || "");
+    } catch {
+      // Coordinates are still useful even when reverse geocoding is unavailable.
+    }
+  }
+
+  function confirmVenue(venue: VenueCandidate) {
+    setConfirmedVenue(venue);
+    setSuggestedVenue(venue);
+    setVenueSelectionStatus("confirmed");
+    setUserExplicitlySkippedVenue(false);
+    setVenueUnavailableReason(null);
+    setVenueStatus("confirmed");
+    setVenuePickerOpen(false);
+  }
+
+  function selectChangedVenue(venue: VenueCandidate) {
+    setConfirmedVenue(venue);
+    setSuggestedVenue((current) => current ?? venue);
+    setVenueSelectionStatus(suggestedVenue && sameVenue(venue, suggestedVenue) ? "confirmed" : "changed");
+    setUserExplicitlySkippedVenue(false);
+    setVenueUnavailableReason(null);
+    setVenueStatus("confirmed");
+    setVenuePickerOpen(false);
+  }
+
+  function skipVenue() {
+    setConfirmedVenue(null);
+    setVenueSelectionStatus("skipped");
+    setUserExplicitlySkippedVenue(true);
+    setVenueUnavailableReason(null);
+    setVenueStatus("skipped");
+    setVenuePickerOpen(false);
+  }
+
   async function submit() {
     if (!photoUri) {
       Alert.alert("Photo required", "Take a photo first so this stamp has an image attached.");
@@ -187,16 +301,23 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
     }
 
     if (!isPhotoStorageConfigured()) {
-      Alert.alert("Photo storage unavailable", "Supabase Storage is not configured, so Pintly cannot save this photo stamp yet.");
+      Alert.alert("Photo storage unavailable", "Cloudflare Images is not configured, so Pintly cannot save this photo stamp yet.");
       return;
     }
 
     const localPhotoUri = photoUri;
     const stampCity = city.trim() || "Unknown";
+    const finalVenue = finalVenueSelection({
+      confirmedVenue,
+      venueSelectionStatus,
+      venueStatus,
+      userExplicitlySkippedVenue,
+      venueUnavailableReason
+    });
     const result = checkInBeer({
       beerName: "Beer log",
       quantity: 1,
-      brewery: stampCity === "Unknown" ? "Pintly log" : `Pintly log - ${stampCity}`,
+      brewery: finalVenue.venue?.name ?? (stampCity === "Unknown" ? "Pintly log" : `Pintly log - ${stampCity}`),
       city: stampCity,
       state,
       country,
@@ -206,9 +327,21 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
       photoSyncStatus: "queued",
       countSource: "manual",
       latitude: coordinates?.latitude,
-      longitude: coordinates?.longitude
+      longitude: coordinates?.longitude,
+      venue: finalVenue.venue,
+      venueProvider: finalVenue.provider,
+      venueConfirmed: finalVenue.confirmed,
+      venueConfirmationStatus: finalVenue.confirmationStatus,
+      venueSelectionStatus: finalVenue.selectionStatus
     });
-    void enqueuePhotoUpload({ checkInId: result.checkIn.id, localUri: localPhotoUri, userId: user.id });
+    void enqueuePhotoUpload({
+      checkInId: result.checkIn.id,
+      localUri: localPhotoUri,
+      userId: user.id,
+      width: photoSize?.width,
+      height: photoSize?.height,
+      groupIds: selectedGroups
+    });
     if (result.completedChallenges.length) {
       const challengeNames = result.completedChallenges.map((challenge) => challenge.title).join(", ");
       const badgeNames = result.unlockedBadges.map((badge) => badge.title).join(", ");
@@ -225,34 +358,32 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={closeModal}>
       <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20 }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12 }}>
           <View>
-            <Text style={{ color: theme.colors.gold, fontSize: 12, fontWeight: "900", letterSpacing: 2 }}>QUICK STAMP</Text>
-            <Text style={{ color: theme.colors.text, fontSize: 28, fontWeight: "900", fontFamily: "Georgia" }}>Log a Beer</Text>
+            <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: "900", letterSpacing: 2 }}>QUICK STAMP</Text>
+            <Text style={{ color: theme.colors.textPrimary, fontSize: 28, fontWeight: "900", fontFamily: "Georgia" }}>Log a Beer</Text>
           </View>
           <Pressable onPress={closeModal} style={{ padding: 8 }}>
-            <Ionicons name="close" color={theme.colors.text} size={28} />
+            <Ionicons name="close" color={theme.colors.textPrimary} size={28} />
           </Pressable>
         </View>
-        <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 0, gap: 14 }} keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 0, paddingBottom: 18, gap: 10 }} keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled">
           <Pressable
             onPress={() => void openCamera()}
             disabled={cameraOpening}
             style={{
-              minHeight: 168,
+              minHeight: 132,
               borderRadius: theme.radius.lg,
               overflow: "hidden",
               borderWidth: 1,
-              borderColor: photoUri ? theme.colors.neon : theme.colors.border,
+              borderColor: photoUri ? theme.colors.primary : theme.colors.cardBorder,
               backgroundColor: theme.colors.surface,
               alignItems: "center",
               justifyContent: "center"
             }}
           >
             {photoUri ? (
-              <View
-                style={{ width: "100%", height: previewHeight, backgroundColor: "#050806" }}
-              >
+              <View style={{ width: "100%", height: previewHeight, backgroundColor: theme.colors.mediaBackdrop }}>
                 <Image source={{ uri: photoUri }} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
                 <View
                   style={{
@@ -262,70 +393,70 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
                     paddingHorizontal: 10,
                     paddingVertical: 6,
                     borderRadius: theme.radius.pill,
-                    backgroundColor: "rgba(0, 0, 0, 0.68)",
+                    backgroundColor: theme.colors.mediaBackdropSoft,
                     borderWidth: 1,
-                    borderColor: theme.colors.neon
+                    borderColor: theme.colors.primary
                   }}
                 >
-                  <Text style={{ color: theme.colors.neon, fontWeight: "900", fontSize: 12 }}>{photoStatusCopy(uploadStatus, cameraOpening).toUpperCase()}</Text>
+                  <Text style={{ color: theme.colors.primary, fontWeight: "900", fontSize: 12 }}>{photoStatusCopy(uploadStatus, cameraOpening).toUpperCase()}</Text>
                 </View>
               </View>
             ) : (
-              <View style={{ alignItems: "center", padding: 22 }}>
+              <View style={{ alignItems: "center", padding: 16 }}>
                 <View
                   style={{
-                    width: 62,
-                    height: 62,
-                    borderRadius: 31,
+                    width: 52,
+                    height: 52,
+                    borderRadius: 26,
                     alignItems: "center",
                     justifyContent: "center",
-                    backgroundColor: theme.colors.neonSoft,
+                    backgroundColor: theme.colors.primarySoft,
                     borderWidth: 1,
-                    borderColor: theme.colors.neon
+                    borderColor: theme.colors.primary
                   }}
                 >
-                  <Ionicons name="camera-outline" color={theme.colors.neon} size={30} />
+                  <Ionicons name="camera-outline" color={theme.colors.primary} size={26} />
                 </View>
-                <Text style={{ color: theme.colors.text, fontWeight: "900", marginTop: 12 }}>Beer photo</Text>
-                <Text style={{ color: theme.colors.muted, marginTop: 4, textAlign: "center" }}>{cameraOpening ? "Opening camera..." : "Take or choose a photo"}</Text>
+                <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", marginTop: 8 }}>Beer photo</Text>
+                <Text style={{ color: theme.colors.textSecondary, marginTop: 3, textAlign: "center", fontSize: 12 }}>{cameraOpening ? "Opening camera..." : "Take or choose a photo"}</Text>
               </View>
             )}
           </Pressable>
           {photoMessage ? (
-            <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.border, padding: 12 }}>
-              <Text style={{ color: theme.colors.muted, lineHeight: 18 }}>{photoMessage}</Text>
+            <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.cardBorder, padding: 12 }}>
+              <Text style={{ color: theme.colors.textSecondary, lineHeight: 18 }}>{photoMessage}</Text>
             </View>
           ) : null}
-          <View
-            style={{
-              backgroundColor: theme.colors.card,
-              borderRadius: theme.radius.lg,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
-              padding: 14,
-              gap: 6
+          <NearbyVenueCard
+            status={venueStatus}
+            suggestedVenue={suggestedVenue}
+            confirmedVenue={confirmedVenue}
+            candidateCount={venueCandidates.length}
+            unavailableReason={venueUnavailableReason}
+            onConfirm={() => suggestedVenue && confirmVenue(suggestedVenue)}
+            onChooseAnother={() => setVenuePickerOpen(true)}
+            onSkip={skipVenue}
+            onAddVenue={() => {
+              if (venueCandidates.length) setVenuePickerOpen(true);
+              else void detectNearbyVenue();
             }}
-          >
-            <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 16 }}>One beer per log</Text>
-            <Text style={{ color: theme.colors.muted, lineHeight: 20 }}>
-              Each photo adds 1 beer to your groups and the global count. Log another photo when you want to count another beer.
-            </Text>
-          </View>
-          <Field label="Note" value={note} onChangeText={setNote} placeholder="Optional note" multiline />
+          />
+          <Field label="Note" value={note} onChangeText={setNote} placeholder="Optional note" compact />
           <View
             style={{
               flexDirection: "row",
               alignItems: "center",
-              gap: 10,
+              gap: 8,
               backgroundColor: theme.colors.card,
               borderRadius: theme.radius.md,
               borderWidth: 1,
-              borderColor: theme.colors.border,
-              padding: 12
+              borderColor: theme.colors.cardBorder,
+              paddingHorizontal: 11,
+              paddingVertical: 9
             }}
           >
-            <Ionicons name="people-outline" color={theme.colors.neon} size={20} />
-            <Text style={{ color: theme.colors.muted, flex: 1, lineHeight: 18 }}>
+            <Ionicons name="people-outline" color={theme.colors.primary} size={18} />
+            <Text numberOfLines={2} style={{ color: theme.colors.textSecondary, flex: 1, lineHeight: 16, fontSize: 12 }}>
               {selectedGroups.length
                 ? `Automatically posts to ${selectedGroups.length} group${selectedGroups.length === 1 ? "" : "s"} you belong to.`
                 : "Create or join a group to share stamps with your crew automatically."}
@@ -338,14 +469,14 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
               style={{
                 flex: 1,
                 alignItems: "center",
-                paddingVertical: 12,
+                paddingVertical: 10,
                 borderRadius: theme.radius.pill,
-                backgroundColor: theme.colors.neonSoft,
+                backgroundColor: theme.colors.primarySoft,
                 borderWidth: 1,
-                borderColor: theme.colors.neon
+                borderColor: theme.colors.primary
               }}
             >
-              <Text style={{ color: theme.colors.neon, fontWeight: "900" }}>{photoUri ? "Retake" : "Camera"}</Text>
+              <Text style={{ color: theme.colors.primary, fontWeight: "900" }}>{photoUri ? "Retake" : "Camera"}</Text>
             </Pressable>
             <Pressable
               onPress={() => void openLibrary()}
@@ -353,33 +484,41 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
               style={{
                 flex: 1,
                 alignItems: "center",
-                paddingVertical: 12,
+                paddingVertical: 10,
                 borderRadius: theme.radius.pill,
                 backgroundColor: theme.colors.card,
                 borderWidth: 1,
-                borderColor: theme.colors.border
+                borderColor: theme.colors.cardBorder
               }}
             >
-              <Text style={{ color: theme.colors.text, fontWeight: "900" }}>Choose Photo</Text>
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>Choose Photo</Text>
             </Pressable>
           </View>
           <Pressable
             onPress={() => void submit()}
             disabled={!canSubmit}
             style={{
-              backgroundColor: canSubmit ? theme.colors.neon : theme.colors.cardSoft,
+              backgroundColor: canSubmit ? theme.colors.primary : theme.colors.surfaceAlt,
               borderRadius: theme.radius.pill,
-              paddingVertical: 16,
+              paddingVertical: 13,
               alignItems: "center",
-              marginTop: 8,
-              marginBottom: 30
+              marginTop: 2,
+              marginBottom: 0
             }}
           >
-            <Text style={{ color: canSubmit ? theme.colors.ink : theme.colors.dim, fontWeight: "900", fontSize: 16 }}>
+            <Text style={{ color: canSubmit ? theme.colors.textOnPrimary : theme.colors.textMuted, fontWeight: "900", fontSize: 16 }}>
               {uploadStatus === "uploading" ? "Uploading Photo..." : "Log Beer"}
             </Text>
           </Pressable>
         </ScrollView>
+        <VenuePickerModal
+          visible={venuePickerOpen}
+          venues={venueCandidates.slice(0, 5)}
+          coordinates={coordinates}
+          onSelect={selectChangedVenue}
+          onSkip={skipVenue}
+          onClose={() => setVenuePickerOpen(false)}
+        />
       </View>
     </Modal>
   );
@@ -392,6 +531,7 @@ type FieldProps = {
   onChangeText: (value: string) => void;
   keyboardType?: "default" | "decimal-pad";
   multiline?: boolean;
+  compact?: boolean;
 };
 
 function photoStatusCopy(status: "idle" | "uploading" | "uploaded" | "local" | "failed", cameraOpening = false) {
@@ -403,29 +543,438 @@ function photoStatusCopy(status: "idle" | "uploading" | "uploaded" | "local" | "
   return "Photo captured";
 }
 
-function Field({ label, value, placeholder, onChangeText, keyboardType = "default", multiline }: FieldProps) {
+function NearbyVenueCard({
+  status,
+  suggestedVenue,
+  confirmedVenue,
+  candidateCount,
+  unavailableReason,
+  onConfirm,
+  onChooseAnother,
+  onSkip,
+  onAddVenue
+}: {
+  status: VenueLookupStatus;
+  suggestedVenue: VenueCandidate | null;
+  confirmedVenue: VenueCandidate | null;
+  candidateCount: number;
+  unavailableReason: VenueUnavailableReason | null;
+  onConfirm: () => void;
+  onChooseAnother: () => void;
+  onSkip: () => void;
+  onAddVenue: () => void;
+}) {
+  const venue = confirmedVenue ?? suggestedVenue;
+  const isLoading = status === "loading";
+  const isConfirmed = status === "confirmed" && confirmedVenue;
+  const isSkipped = status === "skipped";
+  const isUnavailable = status === "unavailable" || status === "error";
+  const hasVenueChoices = status === "suggested" && candidateCount > 0;
+
+  return (
+    <View
+      style={{
+        backgroundColor: theme.colors.card,
+        borderRadius: theme.radius.lg,
+        borderWidth: 1,
+        borderColor: theme.colors.cardBorder,
+        padding: 11,
+        gap: 9
+      }}
+    >
+      <View style={{ flexDirection: "row", gap: 10, alignItems: "flex-start" }}>
+        <View
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: 15,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: theme.colors.primarySoft
+          }}
+        >
+          {isConfirmed ? (
+            <Ionicons name="checkmark" color={theme.colors.primary} size={18} />
+          ) : isLoading ? (
+            <ActivityIndicator color={theme.colors.primary} size="small" />
+          ) : (
+            <Ionicons name="location" color={theme.colors.primary} size={17} />
+          )}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 15 }}>Nearby venue</Text>
+          <Text numberOfLines={2} style={{ color: theme.colors.textSecondary, lineHeight: 17, marginTop: 3, fontSize: 13 }}>
+            {venueCardBody(status, venue, unavailableReason)}
+          </Text>
+          {venue && (status === "suggested" || status === "confirmed") ? (
+            <Text numberOfLines={1} style={{ color: theme.colors.textMuted, marginTop: 2, fontSize: 12 }}>{venueMeta(venue)}</Text>
+          ) : null}
+        </View>
+      </View>
+
+      {status === "suggested" && suggestedVenue ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Pressable
+            onPress={onConfirm}
+            style={{
+              flex: 1,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: theme.colors.primary,
+              borderRadius: theme.radius.pill,
+              paddingVertical: 9
+            }}
+          >
+            <Text style={{ color: theme.colors.textOnPrimary, fontWeight: "900" }}>Yes</Text>
+          </Pressable>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <Pressable onPress={onChooseAnother} hitSlop={8} style={{ paddingVertical: 5 }}>
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>Change</Text>
+            </Pressable>
+            <Pressable onPress={onSkip} hitSlop={8} style={{ paddingVertical: 5 }}>
+              <Text style={{ color: theme.colors.textSecondary, fontWeight: "900" }}>Skip</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
+      {hasVenueChoices && !suggestedVenue ? (
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <Pressable
+            onPress={onChooseAnother}
+            style={{
+              flex: 1,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: theme.colors.primary,
+              borderRadius: theme.radius.pill,
+              paddingVertical: 9
+            }}
+          >
+            <Text style={{ color: theme.colors.textOnPrimary, fontWeight: "900" }}>Choose venue</Text>
+          </Pressable>
+          <Pressable onPress={onSkip} hitSlop={8} style={{ paddingVertical: 4, paddingHorizontal: 4 }}>
+            <Text style={{ color: theme.colors.textSecondary, fontWeight: "900" }}>Skip</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {isConfirmed ? (
+        <Pressable onPress={onChooseAnother} hitSlop={8} style={{ alignSelf: "flex-start", paddingVertical: 2 }}>
+          <Text style={{ color: theme.colors.primary, fontWeight: "900" }}>Change</Text>
+        </Pressable>
+      ) : null}
+
+      {isSkipped ? (
+        <Pressable onPress={onAddVenue} hitSlop={8} style={{ alignSelf: "flex-start", paddingVertical: 2 }}>
+          <Text style={{ color: theme.colors.primary, fontWeight: "900" }}>Add venue</Text>
+        </Pressable>
+      ) : null}
+
+      {isUnavailable ? (
+        <Pressable onPress={onAddVenue} hitSlop={8} style={{ alignSelf: "flex-start", paddingVertical: 2 }}>
+          <Text style={{ color: theme.colors.primary, fontWeight: "900" }}>Try again</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+function VenuePickerModal({
+  visible,
+  venues,
+  coordinates,
+  onSelect,
+  onSkip,
+  onClose
+}: {
+  visible: boolean;
+  venues: VenueCandidate[];
+  coordinates?: { latitude: number; longitude: number };
+  onSelect: (venue: VenueCandidate) => void;
+  onSkip: () => void;
+  onClose: () => void;
+}) {
+  const [searchText, setSearchText] = useState("");
+  const [searched, setSearched] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<VenueCandidate[]>([]);
+  const searchValue = searchText.trim();
+  const displayedVenues = searched ? searchResults : venues;
+
+  useEffect(() => {
+    if (!visible) {
+      setSearchText("");
+      setSearched(false);
+      setSearching(false);
+      setSearchResults([]);
+    }
+  }, [visible]);
+
+  async function searchVenueByName() {
+    if (searchValue.length < 2) return;
+    setSearching(true);
+    setSearched(true);
+    try {
+      if (coordinates) {
+        const results = await searchNearbyVenues({
+          ...coordinates,
+          query: searchValue,
+          radiusMeters: 1200
+        });
+        setSearchResults(results.slice(0, 8));
+      } else {
+        setSearchResults(filterVenuesByQuery(venues, searchValue));
+      }
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable onPress={onClose} style={{ flex: 1, justifyContent: "flex-end", backgroundColor: theme.colors.modalBackdrop }}>
+        <Pressable
+          onPress={(event) => event.stopPropagation()}
+          style={{
+            backgroundColor: theme.colors.card,
+            borderTopLeftRadius: theme.radius.xl,
+            borderTopRightRadius: theme.radius.xl,
+            padding: 20,
+            paddingBottom: 34,
+            borderWidth: 1,
+            borderColor: theme.colors.cardBorder,
+            maxHeight: "78%"
+          }}
+        >
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+            <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 22 }}>Choose venue</Text>
+            <Pressable onPress={onClose} hitSlop={8} style={{ padding: 6 }}>
+              <Ionicons name="close" color={theme.colors.textPrimary} size={24} />
+            </Pressable>
+          </View>
+
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 8,
+              marginTop: 12,
+              borderWidth: 1,
+              borderColor: theme.colors.cardBorder,
+              borderRadius: theme.radius.pill,
+              backgroundColor: theme.colors.surfaceAlt,
+              paddingLeft: 12,
+              paddingRight: 6,
+              paddingVertical: 5
+            }}
+          >
+            <Ionicons name="search" color={theme.colors.iconSecondary} size={18} />
+            <TextInput
+              value={searchText}
+              onChangeText={(value) => {
+                setSearchText(value);
+                if (!value.trim()) {
+                  setSearched(false);
+                  setSearchResults([]);
+                }
+              }}
+              placeholder="Search place name"
+              placeholderTextColor={theme.colors.textMuted}
+              autoCapitalize="words"
+              returnKeyType="search"
+              onSubmitEditing={() => void searchVenueByName()}
+              style={{ flex: 1, color: theme.colors.textPrimary, paddingVertical: 7 }}
+            />
+            <Pressable
+              onPress={() => void searchVenueByName()}
+              disabled={searchValue.length < 2 || searching}
+              style={{
+                minWidth: 42,
+                minHeight: 34,
+                borderRadius: theme.radius.pill,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: searchValue.length >= 2 ? theme.colors.primary : theme.colors.card
+              }}
+            >
+              {searching ? (
+                <ActivityIndicator color={theme.colors.textOnPrimary} size="small" />
+              ) : (
+                <Text style={{ color: searchValue.length >= 2 ? theme.colors.textOnPrimary : theme.colors.textMuted, fontWeight: "900", fontSize: 12 }}>Go</Text>
+              )}
+            </Pressable>
+          </View>
+
+          <ScrollView style={{ marginTop: 12 }} contentContainerStyle={{ gap: 4, paddingBottom: 4 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator>
+            {displayedVenues.length ? (
+              displayedVenues.map((venue) => (
+                <Pressable
+                  key={`${venue.provider}:${venue.providerPlaceId}`}
+                  onPress={() => onSelect(venue)}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 12,
+                    paddingVertical: 13,
+                    borderBottomWidth: 1,
+                    borderBottomColor: theme.colors.cardBorder
+                  }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 16 }}>{venue.name}</Text>
+                    <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>{venueMeta(venue)}</Text>
+                    {venue.address ? <Text style={{ color: theme.colors.textMuted, marginTop: 3 }}>{venue.address}</Text> : null}
+                  </View>
+                  <Ionicons name="chevron-forward" color={theme.colors.iconSecondary} size={18} />
+                </Pressable>
+              ))
+            ) : (
+              <Text style={{ color: theme.colors.textSecondary, lineHeight: 20, paddingVertical: 14 }}>
+                {searched ? "No matching places found nearby. Try another name or skip this venue." : "No nearby venues found. You can still log your beer."}
+              </Text>
+            )}
+          </ScrollView>
+
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 16, paddingTop: 16 }}>
+            <Pressable onPress={onSkip} hitSlop={8} style={{ paddingVertical: 8 }}>
+              <Text style={{ color: theme.colors.primary, fontWeight: "900" }}>Skip venue</Text>
+            </Pressable>
+            <Pressable onPress={onClose} hitSlop={8} style={{ paddingVertical: 8 }}>
+              <Text style={{ color: theme.colors.textSecondary, fontWeight: "900" }}>Close</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message = "Request timed out."): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeout));
+}
+
+function sameVenue(a: VenueCandidate, b: VenueCandidate) {
+  return a.provider === b.provider && a.providerPlaceId === b.providerPlaceId;
+}
+
+function autoSuggestedVenueCandidate(candidates: VenueCandidate[]) {
+  const [candidate, runnerUp] = candidates;
+  if (!candidate) return null;
+
+  const confidence = candidate.confidence ?? 0;
+  const distanceMeters = candidate.distanceMeters ?? Number.MAX_SAFE_INTEGER;
+  const runnerUpConfidence = runnerUp?.confidence ?? 0;
+  const clearWinner = !runnerUp || confidence - runnerUpConfidence >= 0.08 || distanceMeters <= 75;
+  const strongMatch = confidence >= 0.72 || (distanceMeters <= 120 && confidence >= 0.58) || (distanceMeters <= 45 && confidence >= 0.45);
+
+  return strongMatch && clearWinner ? candidate : null;
+}
+
+function finalVenueSelection({
+  confirmedVenue,
+  venueSelectionStatus,
+  venueStatus,
+  userExplicitlySkippedVenue,
+  venueUnavailableReason
+}: {
+  confirmedVenue: VenueCandidate | null;
+  venueSelectionStatus: VenueSelectionStatus | null;
+  venueStatus: VenueLookupStatus;
+  userExplicitlySkippedVenue: boolean;
+  venueUnavailableReason: VenueUnavailableReason | null;
+}): {
+  venue?: VenueCandidate;
+  provider: CheckInVenueProvider;
+  confirmed: boolean;
+  confirmationStatus: VenueConfirmationStatus;
+  selectionStatus: VenueSelectionStatus;
+} {
+  if (confirmedVenue) {
+    return {
+      venue: confirmedVenue,
+      provider: confirmedVenue.provider,
+      confirmed: true,
+      confirmationStatus: "confirmed",
+      selectionStatus: venueSelectionStatus === "changed" ? "changed" : "confirmed"
+    };
+  }
+
+  if (
+    userExplicitlySkippedVenue ||
+    venueStatus === "idle" ||
+    venueStatus === "loading" ||
+    venueStatus === "suggested" ||
+    venueStatus === "skipped" ||
+    (venueStatus === "unavailable" && venueUnavailableReason === "no_venues")
+  ) {
+    return {
+      provider: "skipped",
+      confirmed: false,
+      confirmationStatus: "skipped",
+      selectionStatus: "skipped"
+    };
+  }
+
+  return {
+    provider: "unavailable",
+    confirmed: false,
+    confirmationStatus: "unavailable",
+    selectionStatus: "unavailable"
+  };
+}
+
+function venueCardBody(status: VenueLookupStatus, venue: VenueCandidate | null, unavailableReason: VenueUnavailableReason | null) {
+  if (status === "loading" || status === "idle") return "Finding nearby places...";
+  if (status === "confirmed" && venue) return `Venue confirmed: ${venue.name}`;
+  if (status === "skipped") return "Venue skipped for this log.";
+  if (status === "suggested" && !venue) return "Nearby venue matches found. Choose the correct place or skip.";
+  if (status === "suggested" && venue) return `Looks like you're at ${venue.name}.`;
+  if (status === "error") return "Nearby venue lookup is unavailable. You can still log your beer.";
+  if (unavailableReason === "no_venues") return "No nearby venues found. You can still log your beer.";
+  return "Location permission is off. You can still log your beer.";
+}
+
+function venueMeta(venue: VenueCandidate) {
+  const distance = typeof venue.distanceMeters === "number" ? `${Math.round(venue.distanceMeters)} m away` : undefined;
+  return [distance, venue.category, venue.address].filter(Boolean).join(" · ") || "Nearby place";
+}
+
+function filterVenuesByQuery(venues: VenueCandidate[], query: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return venues;
+  return venues.filter((venue) =>
+    [venue.name, venue.category, venue.address].some((value) => value?.toLowerCase().includes(normalizedQuery))
+  );
+}
+
+function Field({ label, value, placeholder, onChangeText, keyboardType = "default", multiline, compact }: FieldProps) {
   return (
     <View style={{ flex: 1 }}>
-      <Text style={{ color: theme.colors.muted, fontWeight: "800", marginBottom: 7 }}>{label}</Text>
+      <Text style={{ color: theme.colors.textSecondary, fontWeight: "800", marginBottom: compact ? 5 : 7, fontSize: compact ? 12 : undefined }}>{label}</Text>
       <TextInput
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor={theme.colors.dim}
+        placeholderTextColor={theme.colors.textMuted}
         keyboardType={keyboardType}
-        multiline={multiline}
+        multiline={multiline && !compact}
         returnKeyType={multiline ? "done" : "default"}
         blurOnSubmit={multiline}
         onSubmitEditing={multiline ? Keyboard.dismiss : undefined}
         style={{
-          minHeight: multiline ? 92 : 48,
-          color: theme.colors.text,
+          minHeight: compact ? 42 : multiline ? 92 : 48,
+          color: theme.colors.textPrimary,
           backgroundColor: theme.colors.card,
           borderWidth: 1,
-          borderColor: theme.colors.border,
+          borderColor: theme.colors.cardBorder,
           borderRadius: theme.radius.md,
-          paddingHorizontal: 14,
-          paddingVertical: 12,
+          paddingHorizontal: 12,
+          paddingVertical: compact ? 9 : 12,
           textAlignVertical: multiline ? "top" : "center"
         }}
       />

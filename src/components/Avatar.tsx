@@ -9,7 +9,7 @@ type Props = {
   borderColor?: string;
 };
 
-export function Avatar({ label, uri, size = 40, borderColor = theme.colors.border }: Props) {
+export function Avatar({ label, uri, size = 40, borderColor = theme.colors.cardBorder }: Props) {
   const [loadedUri, setLoadedUri] = useState<string | undefined>();
   const [failedUri, setFailedUri] = useState<string | undefined>();
   const failed = Boolean(uri && failedUri === uri);
@@ -27,7 +27,7 @@ export function Avatar({ label, uri, size = 40, borderColor = theme.colors.borde
         height: size,
         borderRadius: size / 2,
         overflow: "hidden",
-        backgroundColor: theme.colors.cardSoft,
+        backgroundColor: theme.colors.surfaceAlt,
         alignItems: "center",
         justifyContent: "center",
         borderWidth: 1,
@@ -45,13 +45,13 @@ export function Avatar({ label, uri, size = 40, borderColor = theme.colors.borde
           />
           {loading ? (
             <View style={{ position: "absolute", inset: 0, alignItems: "center", justifyContent: "center" }}>
-              <ActivityIndicator color={theme.colors.neon} size={size >= 64 ? "large" : "small"} />
+              <ActivityIndicator color={theme.colors.primary} size={size >= 64 ? "large" : "small"} />
             </View>
           ) : null}
         </>
       ) : null}
       {!uri || loading || failed ? (
-        <Text style={{ position: loading ? "absolute" : "relative", color: theme.colors.neon, fontWeight: "900", fontSize: Math.max(12, Math.round(size * 0.38)) }}>
+        <Text style={{ position: loading ? "absolute" : "relative", color: theme.colors.primary, fontWeight: "900", fontSize: Math.max(12, Math.round(size * 0.38)) }}>
           {label}
         </Text>
       ) : null}

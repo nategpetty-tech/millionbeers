@@ -17,9 +17,9 @@ export default function FriendsScreen() {
 }
 
 function EnabledFriendsScreen() {
-  const { friends, checkIns, user, reactToCheckIn, updateCheckIn, deleteCheckIn } = usePassport();
+  const { friends, checkIns, blockedUserIds, user, reactToCheckIn, addCheckInComment, deleteCheckInComment, reportUser, updateCheckIn, deleteCheckIn } = usePassport();
   const friendIds = new Set(friends.map((friend) => friend.userId));
-  const friendActivity = checkIns.filter((checkIn) => friendIds.has(checkIn.userId)).slice(0, 20);
+  const friendActivity = checkIns.filter((checkIn) => friendIds.has(checkIn.userId) && !blockedUserIds.includes(checkIn.userId)).slice(0, 20);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }}>
@@ -31,7 +31,19 @@ function EnabledFriendsScreen() {
           <SectionTitle title="Friends Feed" detail="Recent beer logs from people you are connected with." />
           {friendActivity.length ? (
             friendActivity.map((item) => (
-              <ActivityItem key={item.id} item={item} currentUserId={user.id} onReact={reactToCheckIn} onEdit={updateCheckIn} onDelete={deleteCheckIn} />
+              <ActivityItem
+                key={item.id}
+                item={item}
+                currentUserId={user.id}
+                onReact={reactToCheckIn}
+                onAddComment={addCheckInComment}
+                onDeleteComment={deleteCheckInComment}
+                onReportComment={({ checkInId, groupId, comment, reason, details }) =>
+                  reportUser({ reportedUserId: comment.userId, checkInId, groupId, reason, details })
+                }
+                onEdit={updateCheckIn}
+                onDelete={deleteCheckIn}
+              />
             ))
           ) : (
             <EmptyState title="No friend activity yet" body="Add a friend and their beer logs will appear here." icon="people-outline" />

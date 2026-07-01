@@ -42,9 +42,9 @@ export function FriendsPanel() {
 
   return (
     <View style={{ gap: 12 }}>
-      <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, padding: 14 }}>
-        <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 18 }}>Friends</Text>
-        <Text style={{ color: theme.colors.muted, marginTop: 4, lineHeight: 19 }}>
+      <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.cardBorder, padding: 14 }}>
+        <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 18 }}>Friends</Text>
+        <Text style={{ color: theme.colors.textSecondary, marginTop: 4, lineHeight: 19 }}>
           Friends can see each other's beer activity and map stamps outside of groups.
         </Text>
         <View
@@ -55,36 +55,36 @@ export function FriendsPanel() {
             backgroundColor: theme.colors.surface,
             borderRadius: theme.radius.md,
             borderWidth: 1,
-            borderColor: theme.colors.border,
+            borderColor: theme.colors.cardBorder,
             paddingHorizontal: 12,
             marginTop: 12
           }}
         >
-          <Ionicons name="search-outline" color={theme.colors.muted} size={18} />
+          <Ionicons name="search-outline" color={theme.colors.textSecondary} size={18} />
           <TextInput
             value={query}
             onChangeText={setQuery}
             placeholder="Search friends by name"
-            placeholderTextColor={theme.colors.dim}
+            placeholderTextColor={theme.colors.textMuted}
             autoCapitalize="words"
-            style={{ color: theme.colors.text, flex: 1, height: 46 }}
+            style={{ color: theme.colors.textPrimary, flex: 1, height: 46 }}
           />
-          {searching ? <Ionicons name="sync-outline" color={theme.colors.gold} size={18} /> : null}
+          {searching ? <Ionicons name="sync-outline" color={theme.colors.primary} size={18} /> : null}
         </View>
       </View>
 
       {incomingRequests.length ? (
-        <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.gold, padding: 14, gap: 10 }}>
-          <Text style={{ color: theme.colors.gold, fontWeight: "900", fontSize: 12, letterSpacing: 1 }}>FRIEND REQUESTS</Text>
+        <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.primary, padding: 14, gap: 10 }}>
+          <Text style={{ color: theme.colors.primary, fontWeight: "900", fontSize: 12, letterSpacing: 1 }}>FRIEND REQUESTS</Text>
           {incomingRequests.map((request) => (
             <View key={request.id} style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <Avatar label={request.avatar} uri={request.avatarUrl} size={38} borderColor={theme.colors.gold} />
+              <Avatar label={request.avatar} uri={request.avatarUrl} size={38} borderColor={theme.colors.primary} />
               <View style={{ flex: 1 }}>
-                <Text style={{ color: theme.colors.text, fontWeight: "900" }}>{request.name}</Text>
-                <Text style={{ color: theme.colors.muted, marginTop: 2 }}>Wants to be friends</Text>
+                <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>{request.name}</Text>
+                <Text style={{ color: theme.colors.textSecondary, marginTop: 2 }}>Wants to be friends</Text>
               </View>
-              <Pressable onPress={() => approveFriendRequest(request.id)} style={{ backgroundColor: theme.colors.neon, borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 8 }}>
-                <Text style={{ color: theme.colors.ink, fontWeight: "900", fontSize: 12 }}>Accept</Text>
+              <Pressable onPress={() => approveFriendRequest(request.id)} style={{ backgroundColor: theme.colors.primary, borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 8 }}>
+                <Text style={{ color: theme.colors.textOnPrimary, fontWeight: "900", fontSize: 12 }}>Accept</Text>
               </Pressable>
               <Pressable onPress={() => rejectFriendRequest(request.id)} hitSlop={8}>
                 <Ionicons name="close-circle" color={theme.colors.danger} size={25} />
@@ -95,40 +95,40 @@ export function FriendsPanel() {
       ) : null}
 
       {query.trim().length >= 2 ? (
-        <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, padding: 14, gap: 10 }}>
-          <Text style={{ color: theme.colors.neon, fontWeight: "900", fontSize: 12, letterSpacing: 1 }}>SEARCH RESULTS</Text>
+        <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.cardBorder, padding: 14, gap: 10 }}>
+          <Text style={{ color: theme.colors.primary, fontWeight: "900", fontSize: 12, letterSpacing: 1 }}>SEARCH RESULTS</Text>
           {results.length ? (
             results.map((result) => <SearchResultRow key={result.userId} result={result} onRequest={() => requestFriend(result)} />)
           ) : (
-            <Text style={{ color: theme.colors.muted }}>No matching Pintly users yet.</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>No matching Pintly users yet.</Text>
           )}
         </View>
       ) : null}
 
       {friends.length ? (
-        <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, padding: 14, gap: 10 }}>
-          <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 18 }}>Your Friends</Text>
+        <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.cardBorder, padding: 14, gap: 10 }}>
+          <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 18 }}>Your Friends</Text>
           {friends.map((friend) => (
             <View key={friend.userId} style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <Avatar label={friend.avatar} uri={friend.avatarUrl} size={38} borderColor={theme.colors.neon} />
+              <Avatar label={friend.avatar} uri={friend.avatarUrl} size={38} borderColor={theme.colors.primary} />
               <View style={{ flex: 1 }}>
-                <Text style={{ color: theme.colors.text, fontWeight: "900" }}>{friend.name}</Text>
-                <Text style={{ color: theme.colors.muted, marginTop: 2 }}>Friend activity appears on Journey and Map</Text>
+                <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>{friend.name}</Text>
+                <Text style={{ color: theme.colors.textSecondary, marginTop: 2 }}>Friend activity appears on Journey and Map</Text>
               </View>
             </View>
           ))}
         </View>
       ) : (
-        <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.border, padding: 14 }}>
-          <Text style={{ color: theme.colors.text, fontWeight: "900" }}>No friends yet</Text>
-          <Text style={{ color: theme.colors.muted, marginTop: 5, lineHeight: 19 }}>
+        <View style={{ backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.colors.cardBorder, padding: 14 }}>
+          <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>No friends yet</Text>
+          <Text style={{ color: theme.colors.textSecondary, marginTop: 5, lineHeight: 19 }}>
             Search for a tester above. Once they accept, you can see each other's beer feed and map stamps.
           </Text>
         </View>
       )}
 
       {outgoingRequests.length ? (
-        <Text style={{ color: theme.colors.dim, textAlign: "center", lineHeight: 18 }}>
+        <Text style={{ color: theme.colors.textMuted, textAlign: "center", lineHeight: 18 }}>
           {outgoingRequests.length} outgoing friend {outgoingRequests.length === 1 ? "request is" : "requests are"} waiting for approval.
         </Text>
       ) : null}
@@ -139,22 +139,22 @@ export function FriendsPanel() {
 function SearchResultRow({ result, onRequest }: { result: UserSearchResult; onRequest: () => void }) {
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-      <Avatar label={result.avatar} uri={result.avatarUrl} size={38} borderColor={theme.colors.border} />
+      <Avatar label={result.avatar} uri={result.avatarUrl} size={38} borderColor={theme.colors.cardBorder} />
       <View style={{ flex: 1 }}>
-        <Text style={{ color: theme.colors.text, fontWeight: "900" }}>{result.name}</Text>
-        <Text style={{ color: theme.colors.muted, marginTop: 2 }}>{relationshipCopy(result.relationship)}</Text>
+        <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>{result.name}</Text>
+        <Text style={{ color: theme.colors.textSecondary, marginTop: 2 }}>{relationshipCopy(result.relationship)}</Text>
       </View>
       <Pressable
         disabled={result.relationship !== "none"}
         onPress={onRequest}
         style={{
-          backgroundColor: result.relationship === "none" ? theme.colors.neon : theme.colors.cardSoft,
+          backgroundColor: result.relationship === "none" ? theme.colors.primary : theme.colors.surfaceAlt,
           borderRadius: theme.radius.pill,
           paddingHorizontal: 10,
           paddingVertical: 8
         }}
       >
-        <Text style={{ color: result.relationship === "none" ? theme.colors.ink : theme.colors.dim, fontWeight: "900", fontSize: 12 }}>
+        <Text style={{ color: result.relationship === "none" ? theme.colors.textOnPrimary : theme.colors.textMuted, fontWeight: "900", fontSize: 12 }}>
           {result.relationship === "none" ? "Add" : "Added"}
         </Text>
       </Pressable>

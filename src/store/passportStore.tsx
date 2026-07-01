@@ -1,22 +1,31 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { friendsFeatureEnabled } from "@/config/features";
+import { friendsFeatureEnabled, screenshotDemoEnabled } from "@/config/features";
+import { screenshotDemoCheckIns, screenshotDemoGlobalCount, screenshotDemoGroups, screenshotDemoUser } from "@/data/screenshotSeed";
 import { seedBadges, seedChallenges, seedCheckIns, seedGlobalCount, seedGroups, seedUser } from "@/data/seed";
 import {
   approveRemoteFriendRequest,
   approveRemoteJoinRequest,
+  blockRemoteUser,
+  cancelRemoteJoinRequest,
+  claimRemoteUsername,
+  createRemoteCheckInComment,
   createRemoteCheckInFromLocal,
   createRemoteGroup,
+  deleteRemoteAccount,
+  deleteRemoteCheckInComment,
   deleteRemoteCheckIn,
   fetchRemoteGlobalCount,
   fetchRemoteSnapshot,
   findRemoteGroupByInviteCode,
   rejectRemoteFriendRequest,
   rejectRemoteJoinRequest,
+  reportRemoteUser,
   requestRemoteFriend,
   requestRemoteGroupJoin,
   searchRemoteUsers,
   toggleRemoteReaction,
+  unblockRemoteUser,
   updateRemoteCheckIn,
   updateRemoteCheckInPhoto,
   updateRemoteCheckInScan,
@@ -24,7 +33,7 @@ import {
   upsertProfile
 } from "@/services/pintlyData";
 import { configurePhotoUploadQueue, enqueuePhotoUpload, startPhotoUploadQueueLifecycle } from "@/services/photoUploadQueue";
-import { createSignedProfilePhotoUrl } from "@/services/photoStorage";
+import { buildCloudflareImageUrl, createSignedProfilePhotoUrl, deleteCloudflareImage } from "@/services/photoStorage";
 import {
   Badge,
   BeerCheckIn,
@@ -33,10 +42,12 @@ import {
   CreateGroupInput,
   FriendProfile,
   FriendRequest,
+  GlobalUserRank,
   Group,
   GroupJoinRequest,
   GroupMember,
   GroupStats,
+  ModerationReportReason,
   UpdateProfileInput,
   UpdateGroupBackdropInput,
   UpdateCheckInInput,
@@ -46,6 +57,7 @@ import {
   UserSearchResult
 } from "@/types";
 import { makeId, makeUuid } from "@/utils/format";
+import { GROUP_MILESTONE_TIERS } from "@/utils/groupMilestones";
 import type { AuthProfile } from "./authStore";
 
 const STORAGE_KEY_PREFIX = "passport.mvp.state.v5";
@@ -59,16 +71,20 @@ type PassportState = {
   friends: FriendProfile[];
   friendRequests: FriendRequest[];
   globalCount: number;
+  globalUserRank?: GlobalUserRank;
+  blockedUserIds: string[];
   initialized: boolean;
 };
 
 type PassportActions = {
   initializeSeedData: () => Promise<void>;
   updateProfile: (input: UpdateProfileInput) => void;
+  claimUsername: (username: string) => Promise<string>;
   createGroup: (input: CreateGroupInput) => Group;
   updateGroupBackdrop: (groupId: string, input: UpdateGroupBackdropInput) => void;
   requestJoinGroup: (groupId: string, source?: GroupJoinRequest["source"]) => void;
   requestJoinGroupFromInvite: (group: Group, source?: GroupJoinRequest["source"]) => void;
+  cancelJoinRequest: (groupId: string) => void;
   findGroupByInviteCode: (inviteCode: string) => Promise<Group | null>;
   searchUsers: (query: string) => Promise<UserSearchResult[]>;
   requestFriend: (user: UserSearchResult) => void;
@@ -82,6 +98,12 @@ type PassportActions = {
   updateCheckInScan: (checkInId: string, input: UpdateCheckInScanInput) => void;
   deleteCheckIn: (checkInId: string) => void;
   reactToCheckIn: (checkInId: string) => void;
+  addCheckInComment: (checkInId: string, body: string) => void;
+  deleteCheckInComment: (checkInId: string, commentId: string) => void;
+  blockUser: (userId: string) => void;
+  unblockUser: (userId: string) => void;
+  reportUser: (input: { reportedUserId: string; checkInId?: string; groupId?: string; reason: ModerationReportReason; details?: string }) => void;
+  deleteAccount: () => Promise<void>;
   getGroupLeaderboard: (groupId: string, mode?: "beers" | "checkIns") => GroupMember[];
   getGroupStats: (groupId: string) => GroupStats;
   getGroupActivity: (groupId: string) => BeerCheckIn[];
@@ -104,12 +126,28 @@ function storageKeyFor(userId: string) {
 }
 
 function createSeedState(authenticatedUser?: AuthProfile): PassportState {
+  if (screenshotDemoEnabled) {
+    return normalizeStoredState({
+      user: screenshotDemoUser,
+      groups: screenshotDemoGroups,
+      checkIns: screenshotDemoCheckIns,
+      challenges: seedChallenges,
+      badges: seedBadges,
+      friends: [],
+      friendRequests: [],
+      blockedUserIds: [],
+      globalCount: screenshotDemoGlobalCount,
+      globalUserRank: { userId: screenshotDemoUser.id, totalBeers: 2, checkInCount: 2, rank: 42, totalUsers: 520, topPercent: 8 },
+      initialized: true
+    });
+  }
   const displayName = authenticatedUser?.displayName ?? authenticatedUser?.email?.split("@")[0] ?? "";
   return {
     user: {
       ...seedUser,
       id: authenticatedUser?.id ?? seedUser.id,
       name: displayName,
+      username: authenticatedUser?.username,
       avatar: initialsFor(displayName),
       hasOnboarded: Boolean(displayName)
     },
@@ -119,7 +157,9 @@ function createSeedState(authenticatedUser?: AuthProfile): PassportState {
     badges: seedBadges,
     friends: [],
     friendRequests: [],
+    blockedUserIds: [],
     globalCount: seedGlobalCount,
+    globalUserRank: undefined,
     initialized: true
   };
 }
@@ -334,7 +374,15 @@ function normalizeStoredState(savedState: PassportState): PassportState {
     ...checkIn,
     quantity: beerQuantity(checkIn),
     photoSyncStatus: checkIn.photoSyncStatus ?? (checkIn.photoStoragePath || checkIn.photoUrl ? "synced" : checkIn.photoUri ? "queued" : undefined),
-    remoteSyncStatus: checkIn.remoteSyncStatus ?? "synced"
+    photoCloudflareImageId: checkIn.photoCloudflareImageId,
+    photoImageWidth: checkIn.photoImageWidth,
+    photoImageHeight: checkIn.photoImageHeight,
+    photoBlurhash: checkIn.photoBlurhash,
+    venueConfirmationStatus: checkIn.venueConfirmationStatus ?? "skipped",
+    venueSelectionStatus: checkIn.venueSelectionStatus ?? (checkIn.venueConfirmationStatus === "confirmed" ? "confirmed" : checkIn.venueConfirmationStatus ?? "skipped"),
+    venueConfirmed: checkIn.venueConfirmed ?? (checkIn.venueConfirmationStatus === "confirmed"),
+    remoteSyncStatus: checkIn.remoteSyncStatus ?? "synced",
+    comments: checkIn.comments ?? []
   }));
   const derived = deriveCounts(savedState.user, checkIns, groups, savedState.globalCount ?? seedGlobalCount);
   const challenges = deriveChallenges(savedState.challenges, checkIns);
@@ -350,6 +398,7 @@ function normalizeStoredState(savedState: PassportState): PassportState {
     badges,
     friends: friendsFeatureEnabled ? savedState.friends ?? [] : [],
     friendRequests: friendsFeatureEnabled ? savedState.friendRequests ?? [] : [],
+    blockedUserIds: savedState.blockedUserIds ?? [],
     user: userWithBadges,
     groups: derived.groups,
     challenges,
@@ -365,6 +414,8 @@ function mergeRemoteCheckIns(localCheckIns: BeerCheckIn[], remoteCheckIns: BeerC
 }
 
 async function refreshUserAvatarUrl(user: User): Promise<User> {
+  const cloudflareAvatarUrl = buildCloudflareImageUrl(user.avatarCloudflareImageId, "avatar");
+  if (cloudflareAvatarUrl) return { ...user, avatarUrl: cloudflareAvatarUrl };
   if (!user.avatarStoragePath) return user;
   const avatarUrl = await createSignedProfilePhotoUrl(user.avatarStoragePath).catch(() => undefined);
   return avatarUrl ? { ...user, avatarUrl } : user;
@@ -393,6 +444,7 @@ function bindStoredStateToAuthenticatedUser(savedState: PassportState, authentic
       ...savedState.user,
       id: authenticatedUser.id,
       name: displayName,
+      username: authenticatedUser.username ?? savedState.user.username,
       avatar: nextAvatar,
       hasOnboarded: savedState.user.hasOnboarded || Boolean(displayName.trim())
     },
@@ -431,6 +483,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
   const storageKey = storageKeyFor(authenticatedUser?.id ?? seedUser.id);
   const [state, setState] = useState<PassportState>(() => ({ ...createSeedState(authenticatedUser), initialized: false }));
   const remoteSyncingIds = useRef(new Set<string>());
+  const remoteRetryTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   const persist = useCallback(
     async (nextState: PassportState) => {
@@ -440,6 +493,10 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
   );
 
   const initializeSeedData = useCallback(async () => {
+    if (screenshotDemoEnabled) {
+      setState(createSeedState(authenticatedUser));
+      return;
+    }
     const stored = await loadStoredState(storageKey);
     const normalized = stored ? normalizeStoredState(bindStoredStateToAuthenticatedUser(stored, authenticatedUser)) : null;
     if (normalized) {
@@ -455,7 +512,9 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
             checkIns: mergeRemoteCheckIns(refreshed.checkIns, remote.checkIns),
             friends: remote.friends,
             friendRequests: remote.friendRequests,
-            globalCount: remote.globalCount
+            blockedUserIds: remote.blockedUserIds,
+            globalCount: remote.globalCount,
+            globalUserRank: remote.globalUserRank
           })
         : normalizeStoredState({
             ...refreshed,
@@ -476,7 +535,9 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
           checkIns: mergeRemoteCheckIns(seeded.checkIns, remote.checkIns),
           friends: remote.friends,
           friendRequests: remote.friendRequests,
-          globalCount: remote.globalCount
+          blockedUserIds: remote.blockedUserIds,
+          globalCount: remote.globalCount,
+          globalUserRank: remote.globalUserRank
         })
       : normalizeStoredState({
           ...seeded,
@@ -500,6 +561,10 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
           avatar: initialsFor(name),
           avatarUrl: input.avatarUrl ?? current.user.avatarUrl,
           avatarStoragePath: input.avatarStoragePath ?? current.user.avatarStoragePath,
+          avatarCloudflareImageId: input.avatarCloudflareImageId ?? current.user.avatarCloudflareImageId,
+          avatarImageWidth: input.avatarImageWidth ?? current.user.avatarImageWidth,
+          avatarImageHeight: input.avatarImageHeight ?? current.user.avatarImageHeight,
+          avatarBlurhash: input.avatarBlurhash ?? current.user.avatarBlurhash,
           hasOnboarded: Boolean(name)
         };
         const nextCheckIns = current.checkIns.map((checkIn) =>
@@ -510,7 +575,9 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         const nextGroups = current.groups.map((group) => ({
           ...group,
           members: group.members.map((member) =>
-            member.userId === current.user.id ? { ...member, name: name || "You", avatar: nextUser.avatar, avatarUrl: nextUser.avatarUrl } : member
+            member.userId === current.user.id
+              ? { ...member, name: name || "You", avatar: nextUser.avatar, avatarUrl: nextUser.avatarUrl, avatarCloudflareImageId: nextUser.avatarCloudflareImageId }
+              : member
           )
         }));
         const next = { ...current, user: nextUser, checkIns: nextCheckIns, groups: nextGroups };
@@ -518,6 +585,19 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         syncRemote(upsertProfile(nextUser));
         return next;
       });
+    },
+    [persist]
+  );
+
+  const claimUsername = useCallback(
+    async (username: string) => {
+      const claimedUsername = await claimRemoteUsername(username);
+      setState((current) => {
+        const next = { ...current, user: { ...current.user, username: claimedUsername } };
+        void persist(next);
+        return next;
+      });
+      return claimedUsername;
     },
     [persist]
   );
@@ -537,6 +617,10 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
           .toUpperCase(),
         backdropUrl: input.backdropUrl,
         backdropStoragePath: input.backdropStoragePath,
+        backdropCloudflareImageId: input.backdropCloudflareImageId,
+        backdropImageWidth: input.backdropImageWidth,
+        backdropImageHeight: input.backdropImageHeight,
+        backdropBlurhash: input.backdropBlurhash,
         privacy: input.privacy,
         memberCount: 1,
         goal: Math.max(1, input.goal),
@@ -578,7 +662,11 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
           return {
             ...group,
             backdropUrl: input.backdropUrl,
-            backdropStoragePath: input.backdropStoragePath
+            backdropStoragePath: input.backdropStoragePath,
+            backdropCloudflareImageId: input.backdropCloudflareImageId,
+            backdropImageWidth: input.backdropImageWidth,
+            backdropImageHeight: input.backdropImageHeight,
+            backdropBlurhash: input.backdropBlurhash
           };
         });
         const next = { ...current, groups: nextGroups };
@@ -796,6 +884,31 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
     [persist]
   );
 
+  const cancelJoinRequest = useCallback(
+    (groupId: string) => {
+      const requestId = state.groups
+        .find((group) => group.id === groupId)
+        ?.pendingRequests.find((item) => item.userId === state.user.id && item.status === "pending")?.id;
+      if (!requestId) return;
+      setState((current) => {
+        const nextGroups = current.groups.map((group) => {
+          if (group.id !== groupId) return group;
+          const request = group.pendingRequests.find((item) => item.userId === current.user.id && item.status === "pending");
+          if (!request) return group;
+          return {
+            ...group,
+            pendingRequests: group.pendingRequests.map((item) => (item.id === request.id ? { ...item, status: "rejected" as const } : item))
+          };
+        });
+        const next = { ...current, groups: nextGroups };
+        void persist(next);
+        return next;
+      });
+      syncRemote(cancelRemoteJoinRequest(requestId));
+    },
+    [persist, state.groups, state.user.id]
+  );
+
   const updateChallengeProgress = useCallback(
     (checkIn: BeerCheckIn) => {
       setState((current) => {
@@ -830,14 +943,30 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
           latitude: input.latitude,
           longitude: input.longitude
         },
+        venueProvider: input.venue?.provider ?? input.venueProvider,
+        venueProviderPlaceId: input.venue?.providerPlaceId,
+        venueName: input.venue?.name,
+        venueCategory: input.venue?.category,
+        venueLatitude: input.venue?.latitude,
+        venueLongitude: input.venue?.longitude,
+        venueAddress: input.venue?.address,
+        venueDistanceMeters: input.venue?.distanceMeters,
+        venueConfirmed: input.venueConfirmed ?? (input.venueConfirmationStatus === "confirmed"),
+        venueConfirmationStatus: input.venueConfirmationStatus ?? "skipped",
+        venueSelectionStatus: input.venueSelectionStatus ?? (input.venueConfirmationStatus === "confirmed" ? "confirmed" : input.venueConfirmationStatus ?? "skipped"),
         note: input.note?.trim(),
         photoUri: input.photoUri,
         photoUrl: input.photoUrl,
         photoStoragePath: input.photoStoragePath,
         photoThumbnailUrl: input.photoThumbnailUrl,
         photoThumbnailStoragePath: input.photoThumbnailStoragePath,
+        photoCloudflareImageId: input.photoCloudflareImageId,
+        photoImageWidth: input.photoImageWidth,
+        photoImageHeight: input.photoImageHeight,
+        photoBlurhash: input.photoBlurhash,
         photoSyncStatus: input.photoSyncStatus ?? (input.photoStoragePath || input.photoUrl ? "synced" : input.photoUri ? "queued" : undefined),
         remoteSyncStatus: input.remoteSyncStatus ?? "queued",
+        remoteSyncError: undefined,
         scannedBeerCount: input.scannedBeerCount,
         scanConfidence: input.scanConfidence,
         scanStatus: input.scanStatus,
@@ -847,7 +976,8 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         createdAt: new Date().toISOString(),
         reactions: 0,
         reactedBy: [],
-        reactionUsers: []
+        reactionUsers: [],
+        comments: []
       };
 
       const projectedCheckIns = [checkIn, ...state.checkIns];
@@ -941,6 +1071,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       (checkIn) =>
         checkIn.userId === state.user.id &&
         checkIn.remoteSyncStatus === "queued" &&
+        isReadyForRemotePublish(checkIn) &&
         !remoteSyncingIds.current.has(checkIn.id)
     );
     pending.forEach((checkIn) => {
@@ -948,31 +1079,50 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       setState((current) => {
         const next = {
           ...current,
-          checkIns: current.checkIns.map((item) => (item.id === checkIn.id ? { ...item, remoteSyncStatus: "syncing" as const } : item))
+          checkIns: current.checkIns.map((item) => (item.id === checkIn.id ? { ...item, remoteSyncStatus: "syncing" as const, remoteSyncError: undefined } : item))
         };
         void persist(next);
         return next;
       });
-      createRemoteCheckInFromLocal(checkIn)
+      withTimeout(createRemoteCheckInFromLocal(checkIn), 12_000, "Stamp sync timed out")
         .then(() => {
           setState((current) => {
             const next = {
               ...current,
-              checkIns: current.checkIns.map((item) => (item.id === checkIn.id ? { ...item, remoteSyncStatus: "synced" as const } : item))
+              checkIns: current.checkIns.map((item) => (item.id === checkIn.id ? { ...item, remoteSyncStatus: "synced" as const, remoteSyncError: undefined } : item))
             };
             void persist(next);
             return next;
           });
         })
-        .catch(() => {
+        .catch((error) => {
+          console.warn("Could not sync check-in", error);
           setState((current) => {
             const next = {
               ...current,
-              checkIns: current.checkIns.map((item) => (item.id === checkIn.id ? { ...item, remoteSyncStatus: "failed" as const } : item))
+              checkIns: current.checkIns.map((item) =>
+                item.id === checkIn.id ? { ...item, remoteSyncStatus: "failed" as const, remoteSyncError: errorMessage(error) } : item
+              )
             };
             void persist(next);
             return next;
           });
+          if (!remoteRetryTimers.current.has(checkIn.id)) {
+            const timer = setTimeout(() => {
+              remoteRetryTimers.current.delete(checkIn.id);
+              setState((current) => {
+                const target = current.checkIns.find((item) => item.id === checkIn.id);
+                if (!target || target.remoteSyncStatus !== "failed") return current;
+                const next = {
+                  ...current,
+                  checkIns: current.checkIns.map((item) => (item.id === checkIn.id ? { ...item, remoteSyncStatus: "queued" as const } : item))
+                };
+                void persist(next);
+                return next;
+              });
+            }, 15_000);
+            remoteRetryTimers.current.set(checkIn.id, timer);
+          }
         })
         .finally(() => {
           remoteSyncingIds.current.delete(checkIn.id);
@@ -1018,6 +1168,10 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
                 photoStoragePath: input.photoStoragePath ?? checkIn.photoStoragePath,
                 photoThumbnailUrl: input.photoThumbnailUrl ?? checkIn.photoThumbnailUrl,
                 photoThumbnailStoragePath: input.photoThumbnailStoragePath ?? checkIn.photoThumbnailStoragePath,
+                photoCloudflareImageId: input.photoCloudflareImageId ?? checkIn.photoCloudflareImageId,
+                photoImageWidth: input.photoImageWidth ?? checkIn.photoImageWidth,
+                photoImageHeight: input.photoImageHeight ?? checkIn.photoImageHeight,
+                photoBlurhash: input.photoBlurhash ?? checkIn.photoBlurhash,
                 photoSyncStatus: input.photoSyncStatus ?? checkIn.photoSyncStatus
               }
             : checkIn
@@ -1037,18 +1191,24 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
           photoSyncStatus: "syncing"
         });
       },
-      onSuccess: async ({ checkInId, photoUrl, photoStoragePath, photoThumbnailUrl, photoThumbnailStoragePath }) => {
+      onSuccess: async ({ checkInId, photoUrl, photoStoragePath, photoThumbnailUrl, photoThumbnailStoragePath, photoCloudflareImageId, photoImageWidth, photoImageHeight }) => {
         await updateRemoteCheckInPhoto(checkInId, {
           photoUrl,
           photoStoragePath,
           photoThumbnailUrl,
-          photoThumbnailStoragePath
+          photoThumbnailStoragePath,
+          photoCloudflareImageId,
+          photoImageWidth,
+          photoImageHeight
         });
         updateCheckInPhoto(checkInId, {
           photoUrl,
           photoStoragePath,
           photoThumbnailUrl,
           photoThumbnailStoragePath,
+          photoCloudflareImageId,
+          photoImageWidth,
+          photoImageHeight,
           photoSyncStatus: "synced"
         });
       },
@@ -1063,6 +1223,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
 
   const deleteCheckIn = useCallback(
     (checkInId: string) => {
+      const cloudflareImageId = state.checkIns.find((checkIn) => checkIn.id === checkInId && checkIn.userId === state.user.id)?.photoCloudflareImageId;
       setState((current) => {
         const target = current.checkIns.find((checkIn) => checkIn.id === checkInId);
         if (!target || target.userId !== current.user.id) return current;
@@ -1084,8 +1245,14 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         return next;
       });
       syncRemote(deleteRemoteCheckIn(checkInId));
+      const retryTimer = remoteRetryTimers.current.get(checkInId);
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        remoteRetryTimers.current.delete(checkInId);
+      }
+      if (cloudflareImageId) syncRemote(deleteCloudflareImage(cloudflareImageId));
     },
-    [persist]
+    [persist, state.checkIns, state.user.id]
   );
 
   const reactToCheckIn = useCallback(
@@ -1125,9 +1292,97 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
     [persist]
   );
 
+  const addCheckInComment = useCallback(
+    (checkInId: string, body: string) => {
+      const trimmed = body.trim().slice(0, 500);
+      if (!trimmed) return;
+      setState((current) => {
+        const target = current.checkIns.find((checkIn) => checkIn.id === checkInId);
+        if (!target) return current;
+        const comment = {
+          id: makeUuid(),
+          checkInId,
+          userId: current.user.id,
+          userName: current.user.name || "You",
+          userAvatar: current.user.avatar,
+          userAvatarUrl: current.user.avatarUrl,
+          userAvatarCloudflareImageId: current.user.avatarCloudflareImageId,
+          body: trimmed,
+          createdAt: new Date().toISOString()
+        };
+        const nextCheckIns = current.checkIns.map((checkIn) =>
+          checkIn.id === checkInId ? { ...checkIn, comments: [...(checkIn.comments ?? []), comment] } : checkIn
+        );
+        const next = { ...current, checkIns: nextCheckIns };
+        void persist(next);
+        syncRemote(createRemoteCheckInComment(comment));
+        return next;
+      });
+    },
+    [persist]
+  );
+
+  const deleteCheckInComment = useCallback(
+    (checkInId: string, commentId: string) => {
+      setState((current) => {
+        const target = current.checkIns.find((checkIn) => checkIn.id === checkInId);
+        const comment = target?.comments.find((item) => item.id === commentId);
+        if (!target || !comment || (comment.userId !== current.user.id && target.userId !== current.user.id)) return current;
+        const nextCheckIns = current.checkIns.map((checkIn) =>
+          checkIn.id === checkInId ? { ...checkIn, comments: checkIn.comments.filter((item) => item.id !== commentId) } : checkIn
+        );
+        const next = { ...current, checkIns: nextCheckIns };
+        void persist(next);
+        syncRemote(deleteRemoteCheckInComment(commentId));
+        return next;
+      });
+    },
+    [persist]
+  );
+
+  const blockUser = useCallback(
+    (userId: string) => {
+      if (!userId || userId === state.user.id) return;
+      setState((current) => {
+        if (current.blockedUserIds.includes(userId)) return current;
+        const next = { ...current, blockedUserIds: [...current.blockedUserIds, userId] };
+        void persist(next);
+        return next;
+      });
+      syncRemote(blockRemoteUser(userId, state.user.id));
+    },
+    [persist, state.user.id]
+  );
+
+  const unblockUser = useCallback(
+    (userId: string) => {
+      setState((current) => {
+        if (!current.blockedUserIds.includes(userId)) return current;
+        const next = { ...current, blockedUserIds: current.blockedUserIds.filter((id) => id !== userId) };
+        void persist(next);
+        return next;
+      });
+      syncRemote(unblockRemoteUser(userId, state.user.id));
+    },
+    [persist, state.user.id]
+  );
+
+  const reportUser = useCallback(
+    (input: { reportedUserId: string; checkInId?: string; groupId?: string; reason: ModerationReportReason; details?: string }) => {
+      if (!input.reportedUserId || input.reportedUserId === state.user.id) return;
+      syncRemote(reportRemoteUser({ ...input, reporterId: state.user.id }));
+    },
+    [state.user.id]
+  );
+
+  const deleteAccount = useCallback(async () => {
+    await deleteRemoteAccount();
+    await AsyncStorage.removeItem(storageKey);
+  }, [storageKey]);
+
   const getGroupActivity = useCallback(
-    (groupId: string) => state.checkIns.filter((checkIn) => checkIn.groupIds.includes(groupId)),
-    [state.checkIns]
+    (groupId: string) => state.checkIns.filter((checkIn) => checkIn.groupIds.includes(groupId) && !state.blockedUserIds.includes(checkIn.userId)),
+    [state.blockedUserIds, state.checkIns]
   );
 
   const getGroupLeaderboard = useCallback(
@@ -1150,10 +1405,8 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         weeklyTotal: totalBeerQuantity(activity.filter((item) => new Date(item.createdAt).getTime() >= weekAgo)),
         monthlyTotal: totalBeerQuantity(activity.filter((item) => new Date(item.createdAt).getTime() >= monthAgo)),
         milestones: [
-          { label: "First 10 beers", complete: (group?.beerCount ?? 0) >= 10 },
-          { label: "First 100 beers", complete: (group?.beerCount ?? 0) >= 100 },
-          { label: "10 feed posts", complete: activity.length >= 10 },
-          { label: "Halfway to goal", complete: (group?.beerCount ?? 0) >= (group?.goal ?? 1) / 2 }
+          ...GROUP_MILESTONE_TIERS.slice(0, 3).map((tier) => ({ label: `${tier.toLocaleString()} beer badge`, complete: (group?.beerCount ?? 0) >= tier })),
+          { label: "10 feed posts", complete: activity.length >= 10 }
         ]
       };
     },
@@ -1171,10 +1424,12 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       ...state,
       initializeSeedData,
       updateProfile,
+      claimUsername,
       createGroup,
       updateGroupBackdrop,
       requestJoinGroup,
       requestJoinGroupFromInvite,
+      cancelJoinRequest,
       findGroupByInviteCode,
       searchUsers,
       requestFriend,
@@ -1188,6 +1443,12 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       updateCheckInScan,
       deleteCheckIn,
       reactToCheckIn,
+      addCheckInComment,
+      deleteCheckInComment,
+      blockUser,
+      unblockUser,
+      reportUser,
+      deleteAccount,
       getGroupLeaderboard,
       getGroupStats,
       getGroupActivity,
@@ -1198,10 +1459,12 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       state,
       initializeSeedData,
       updateProfile,
+      claimUsername,
       createGroup,
       updateGroupBackdrop,
       requestJoinGroup,
       requestJoinGroupFromInvite,
+      cancelJoinRequest,
       findGroupByInviteCode,
       searchUsers,
       requestFriend,
@@ -1215,6 +1478,12 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       updateCheckInScan,
       deleteCheckIn,
       reactToCheckIn,
+      addCheckInComment,
+      deleteCheckInComment,
+      blockUser,
+      unblockUser,
+      reportUser,
+      deleteAccount,
       getGroupLeaderboard,
       getGroupStats,
       getGroupActivity,
@@ -1224,6 +1493,36 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
   );
 
   return <PassportContext.Provider value={value}>{children}</PassportContext.Provider>;
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error && "message" in error && typeof error.message === "string") return error.message;
+  return "Could not sync stamp";
+}
+
+function withTimeout<T>(task: Promise<T>, ms: number, message: string) {
+  return Promise.race<T>([
+    task,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error(message)), ms);
+    })
+  ]);
+}
+
+function isReadyForRemotePublish(checkIn: BeerCheckIn) {
+  if (!checkIn.photoUri) return true;
+  return hasRemotePhoto(checkIn);
+}
+
+function hasRemotePhoto(checkIn: BeerCheckIn) {
+  return Boolean(
+    checkIn.photoCloudflareImageId ||
+      checkIn.photoStoragePath ||
+      checkIn.photoUrl ||
+      checkIn.photoThumbnailStoragePath ||
+      checkIn.photoThumbnailUrl
+  );
 }
 
 export function usePassport() {

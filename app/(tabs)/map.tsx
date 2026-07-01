@@ -1,30 +1,32 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useMemo, useRef, useState } from "react";
+import { useFocusEffect } from "expo-router";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Image, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { BeerMap, BeerMapPin } from "@/components/BeerMap";
 import { CheckInModal } from "@/components/CheckInModal";
-import { ScreenHeader } from "@/components/ScreenHeader";
-import { SectionTitle } from "@/components/SectionTitle";
-import { StatCard } from "@/components/StatCard";
-import { friendsFeatureEnabled } from "@/config/features";
+import { ZoomablePhotoModal } from "@/components/ZoomablePhotoModal";
+import { buildCloudflareImageUrl } from "@/services/photoStorage";
 import { usePassport } from "@/store/passportStore";
-import { theme } from "@/theme";
-import type { BeerCheckIn } from "@/types";
-import { broadPlaceLabel } from "@/utils/format";
+import { AppTheme, useAppTheme } from "@/theme";
+import { BeerCheckIn } from "@/types";
+import { broadPlaceLabel, formatNumber } from "@/utils/format";
 
-const SAME_PLACE_METERS = 60;
+const SAME_PLACE_METERS = 70;
+const mapPromptMascot = require("../../assets/map/select-place-mascot.png");
 
-type PinPhoto = {
+type PlacePhoto = {
   id: string;
-  fullUri: string;
-  thumbnailUri: string;
-  createdAt: string;
-  beerCount: number;
-  userName: string;
+  uri: string;
 };
 
-type Pin = {
+type VisitGroup = {
+  dateKey: string;
+  date: Date;
+  logs: BeerCheckIn[];
+};
+
+type PlacePin = {
   id: string;
   title: string;
   city: string;
@@ -33,333 +35,554 @@ type Pin = {
   latitude?: number;
   longitude?: number;
   hasCoordinates: boolean;
+  hasNamedPlace: boolean;
   visitCount: number;
   beerCount: number;
-  visitors: string[];
-  photos: PinPhoto[];
-  x: number;
-  y: number;
-  latestAt: string;
+  firstVisit: string;
+  lastVisit: string;
+  photos: PlacePhoto[];
+  logs: BeerCheckIn[];
+  visits: VisitGroup[];
 };
 
 export default function MapScreen() {
-  const { checkIns, friends, user } = usePassport();
+  const theme = useAppTheme();
+  const { checkIns, user } = usePassport();
   const [checkInOpen, setCheckInOpen] = useState(false);
-  const [scope, setScope] = useState<"mine" | "friends">("mine");
+  const [historyPin, setHistoryPin] = useState<PlacePin | null>(null);
+  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView | null>(null);
-  const selectedStampY = useRef(0);
-  const selectedPhotosY = useRef(0);
-  const friendIds = useMemo(() => new Set(friends.map((friend) => friend.userId)), [friends]);
-  const friendLastCheckIns = useMemo(() => latestFriendCheckIns(checkIns, friendIds), [checkIns, friendIds]);
-  const scopedCheckIns = useMemo(
-    () => (scope === "mine" || !friendsFeatureEnabled ? checkIns.filter((item) => item.userId === user.id) : friendLastCheckIns),
-    [checkIns, friendLastCheckIns, scope, user.id]
+  const selectedCardY = useRef(0);
+  const personalLogs = useMemo(() => checkIns.filter((item) => item.userId === user.id), [checkIns, user.id]);
+  const pins = useMemo(() => buildPlacePins(personalLogs), [personalLogs]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedPin = pins.find((pin) => pin.id === selectedId) ?? null;
+  const stats = useMemo(
+    () => ({
+      places: pins.length,
+      stamps: personalLogs.length,
+      beers: personalLogs.reduce((total, log) => total + (log.quantity ?? 1), 0)
+    }),
+    [personalLogs, pins]
   );
-  const pins = useMemo(() => buildPlacePins(scopedCheckIns), [scopedCheckIns]);
-
-  const cities = useMemo(() => ["All", ...Array.from(new Set(pins.map((pin) => pin.city).filter(Boolean)))], [pins]);
-  const [city, setCity] = useState("All");
-  const filteredPins = city === "All" ? pins : pins.filter((pin) => pin.city === city);
-  const [selected, setSelected] = useState<Pin | null>(filteredPins[0] ?? null);
-  const visibleSelected = selected && filteredPins.some((pin) => pin.id === selected.id) ? selected : filteredPins[0];
-  const summaryStats = useMemo(() => {
-    const source = city === "All" ? scopedCheckIns : scopedCheckIns.filter((item) => item.location.city === city);
-    return {
-      cities: new Set(source.map((item) => item.location.city).filter(Boolean)).size,
-      states: new Set(source.map((item) => item.location.state).filter(Boolean)).size,
-      beers: source.reduce((sum, item) => sum + (item.quantity ?? 1), 0)
-    };
-  }, [city, scopedCheckIns]);
-  const mapPins: BeerMapPin[] = filteredPins.map((pin) => ({
+  const mostVisited = useMemo(() => [...pins].sort((a, b) => b.beerCount - a.beerCount || b.visitCount - a.visitCount).slice(0, 6), [pins]);
+  const mapPins: BeerMapPin[] = pins.map((pin) => ({
     id: pin.id,
     title: pin.title,
-    subtitle: `${pin.beerCount} beers • ${pin.visitCount} logs`,
-    latitude: pin.hasCoordinates ? pin.latitude : undefined,
-    longitude: pin.hasCoordinates ? pin.longitude : undefined,
+    subtitle: `${pin.visitCount} ${pin.visitCount === 1 ? "visit" : "visits"} • ${pin.beerCount} ${pin.beerCount === 1 ? "beer" : "beers"}`,
+    latitude: pin.latitude,
+    longitude: pin.longitude,
     beerCount: pin.beerCount
   }));
 
-  function scrollToSelectedStamp() {
+  function selectPin(id: string) {
+    setSelectedId(id);
     requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({
-        y: Math.max(0, selectedStampY.current - 12),
-        animated: true
-      });
+      scrollRef.current?.scrollTo({ y: Math.max(0, selectedCardY.current - 10), animated: true });
     });
   }
 
-  function scrollToSelectedPhotos() {
-    requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({
-        y: Math.max(0, selectedStampY.current + selectedPhotosY.current - 12),
-        animated: true
-      });
-    });
-  }
-
-  function selectPinAndShowPhotos(id: string) {
-    const pin = filteredPins.find((item) => item.id === id) ?? null;
-    setSelected(pin);
-    if (pin?.photos.length) {
-      scrollToSelectedPhotos();
-      return;
-    }
-    scrollToSelectedStamp();
-  }
-
-  function changeScope(nextScope: "mine" | "friends") {
-    setScope(nextScope);
-    setCity("All");
-    setSelected(null);
-  }
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        setSelectedId(null);
+        setHistoryPin(null);
+        setPreviewPhoto(null);
+      };
+    }, [])
+  );
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <ScrollView ref={scrollRef} contentContainerStyle={{ paddingBottom: 120 }}>
-        <ScreenHeader
-          title="Map"
-          subtitle={scope === "mine" || !friendsFeatureEnabled ? "A personal atlas for the places you have logged beers." : "The latest drinking location each friend has shared."}
-        />
-        <View style={{ paddingHorizontal: 20, gap: 14 }}>
+        <View style={{ paddingHorizontal: 22, paddingTop: 14, paddingBottom: 8 }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: theme.colors.accent, fontSize: 12, fontWeight: "900", letterSpacing: 2 }}>PINTLY</Text>
+              <Text style={{ color: theme.colors.textPrimary, fontSize: 38, fontWeight: "900", marginTop: 6 }}>Map</Text>
+              <Text style={{ color: theme.colors.textSecondary, lineHeight: 21, marginTop: 6 }}>Your beer passport. Everywhere you've logged a beer.</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={{ paddingHorizontal: 20, gap: 24 }}>
           <View style={{ flexDirection: "row", gap: 10 }}>
-            <StatCard label="Cities" value={summaryStats.cities} />
-            <StatCard label="States" value={summaryStats.states} accent={theme.colors.gold} />
-            <StatCard label={scope === "mine" ? "Total beers" : "Latest beers"} value={summaryStats.beers} />
+            <PassportStat label="Places" value={stats.places} theme={theme} />
+            <PassportStat label="Stamps" value={stats.stamps} theme={theme} />
+            <PassportStat label="Beers" value={stats.beers} theme={theme} />
           </View>
 
-          {friendsFeatureEnabled ? (
-            <View style={{ flexDirection: "row", gap: 8, backgroundColor: theme.colors.card, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.border, padding: 4 }}>
-              <ScopeButton label="My Stamps" active={scope === "mine"} onPress={() => changeScope("mine")} />
-              <ScopeButton label="Friend Last Logs" active={scope === "friends"} onPress={() => changeScope("friends")} />
-            </View>
-          ) : null}
-
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              {cities.map((item) => {
-                const active = city === item;
-                return (
-                  <Pressable
-                    key={item}
-                    onPress={() => {
-                      setCity(item);
-                      const firstPin = item === "All" ? pins[0] : pins.find((pin) => pin.city === item);
-                      setSelected(firstPin ?? null);
-                    }}
-                    style={{
-                      paddingHorizontal: 14,
-                      paddingVertical: 10,
-                      borderRadius: theme.radius.pill,
-                      backgroundColor: active ? theme.colors.neon : theme.colors.card,
-                      borderWidth: 1,
-                      borderColor: active ? theme.colors.neon : theme.colors.border
-                    }}
-                  >
-                    <Text style={{ color: active ? theme.colors.ink : theme.colors.text, fontWeight: "900" }}>{item}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </ScrollView>
-
-          <BeerMap
-            pins={mapPins}
-            selectedId={visibleSelected?.id}
-            onSelect={selectPinAndShowPhotos}
-          />
+          <View style={{ borderRadius: 28, overflow: "hidden", ...theme.shadow.card }}>
+            <BeerMap pins={mapPins} selectedId={selectedPin?.id} onSelect={selectPin} />
+          </View>
 
           <View
             onLayout={(event) => {
-              selectedStampY.current = event.nativeEvent.layout.y;
-            }}
-            style={{
-              backgroundColor: theme.colors.card,
-              borderRadius: theme.radius.lg,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
-              padding: 16
+              selectedCardY.current = event.nativeEvent.layout.y;
             }}
           >
-            <LocationSummary
-              pin={visibleSelected}
-              scope={scope}
-              onEmptyAction={scope === "mine" ? () => setCheckInOpen(true) : undefined}
-              onViewPhotos={scrollToSelectedPhotos}
-              onPhotosLayout={(y) => {
-                selectedPhotosY.current = y;
-              }}
+            <SelectedLocationCard
+              pin={selectedPin}
+              hasPlaces={pins.length > 0}
+              onLogBeer={() => setCheckInOpen(true)}
+              onViewHistory={() => selectedPin && setHistoryPin(selectedPin)}
+              onPhotoPress={setPreviewPhoto}
+              theme={theme}
             />
           </View>
 
-          <SectionTitle
-            title={scope === "mine" || !friendsFeatureEnabled ? "Visited Places" : "Friend Last Logs"}
-            detail={scope === "mine" || !friendsFeatureEnabled ? "Tap a row to focus the atlas." : "One latest beer location per friend."}
-          />
-          {filteredPins.map((pin) => (
-            <Pressable
-              key={pin.id}
-              onPress={() => setSelected(pin)}
-              style={{
-                backgroundColor: visibleSelected?.id === pin.id ? theme.colors.neonSoft : theme.colors.card,
-                borderWidth: 1,
-                borderColor: visibleSelected?.id === pin.id ? theme.colors.neon : theme.colors.border,
-                borderRadius: theme.radius.lg,
-                padding: 14
-              }}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-                <View
-                  style={{
-                    width: 46,
-                    height: 46,
-                    borderRadius: 16,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    backgroundColor: theme.colors.surface,
-                    borderWidth: 1,
-                    borderColor: theme.colors.border
-                  }}
-                >
-                  <Ionicons name="location-outline" color={theme.colors.gold} size={22} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 16 }}>{pin.title}</Text>
-                  <Text style={{ color: theme.colors.muted, marginTop: 3 }}>
-                    {scope === "mine"
-                      ? `${pin.beerCount} beers • ${pin.photos.length} photos`
-                      : `${pin.visitors.join(", ")} • ${pin.beerCount} latest beers`}
-                  </Text>
-                </View>
-                <Text style={{ color: theme.colors.neon, fontWeight: "900" }}>{scope === "mine" ? `${pin.visitCount}x` : "Latest"}</Text>
+          <View style={{ gap: 12 }}>
+            <SectionHeader title="Most Visited Places" detail="Your top locations by beers logged." theme={theme} />
+            {mostVisited.length ? (
+              <View style={{ gap: 10 }}>
+                {mostVisited.map((pin) => (
+                  <PlaceRow
+                    key={pin.id}
+                    pin={pin}
+                    active={selectedPin?.id === pin.id}
+                    onPress={() => {
+                      setSelectedId(pin.id);
+                      requestAnimationFrame(() => {
+                        scrollRef.current?.scrollTo({ y: Math.max(0, selectedCardY.current - 10), animated: true });
+                      });
+                    }}
+                    theme={theme}
+                  />
+                ))}
               </View>
-            </Pressable>
-          ))}
+            ) : (
+              <EmptyPassportCard title="No places stamped yet." body="Log a beer to start building your beer passport." actionLabel="Log Beer" onAction={() => setCheckInOpen(true)} theme={theme} />
+            )}
+          </View>
+
         </View>
       </ScrollView>
       <CheckInModal visible={checkInOpen} onClose={() => setCheckInOpen(false)} />
+      <LocationHistoryModal pin={historyPin} onClose={() => setHistoryPin(null)} theme={theme} />
+      <PhotoPreviewModal uri={previewPhoto} onClose={() => setPreviewPhoto(null)} theme={theme} />
     </SafeAreaView>
   );
 }
 
-function buildPlacePins(checkIns: BeerCheckIn[]) {
-  const coordinateItems = checkIns.filter((item) => hasCoordinates(item));
-  const minLat = coordinateItems.length ? Math.min(...coordinateItems.map((item) => item.location.latitude ?? 0)) : 0;
-  const maxLat = coordinateItems.length ? Math.max(...coordinateItems.map((item) => item.location.latitude ?? 0)) : 0;
-  const minLon = coordinateItems.length ? Math.min(...coordinateItems.map((item) => item.location.longitude ?? 0)) : 0;
-  const maxLon = coordinateItems.length ? Math.max(...coordinateItems.map((item) => item.location.longitude ?? 0)) : 0;
-  const pins: Pin[] = [];
+function buildPlacePins(logs: BeerCheckIn[]): PlacePin[] {
+  const pins: PlacePin[] = [];
 
-  checkIns
+  logs
     .slice()
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-    .forEach((item, index) => {
-      const placeKey = fallbackPlaceKey(item);
-      const hasGps = hasCoordinates(item);
-      const pin = hasGps
+    .forEach((log) => {
+      const fallbackKey = placeKey(log);
+      const namedPin = pins.find((item) => item.id === fallbackKey);
+      const gpsPin = !hasNamedPlace(log) && hasCoordinates(log)
         ? pins.find(
-            (candidate) =>
-              candidate.hasCoordinates &&
-              typeof candidate.latitude === "number" &&
-              typeof candidate.longitude === "number" &&
-              distanceMeters(candidate.latitude, candidate.longitude, item.location.latitude as number, item.location.longitude as number) <=
-                SAME_PLACE_METERS
+            (pin) =>
+              !pin.hasNamedPlace &&
+              pin.hasCoordinates &&
+              typeof pin.latitude === "number" &&
+              typeof pin.longitude === "number" &&
+              distanceMeters(pin.latitude, pin.longitude, log.location.latitude as number, log.location.longitude as number) <= SAME_PLACE_METERS
           )
-        : pins.find((candidate) => candidate.id === placeKey);
+        : undefined;
+      const pin = namedPin ?? gpsPin;
 
       if (pin) {
-        addCheckInToPin(pin, item);
+        addLogToPin(pin, log);
         return;
       }
 
-      const coordinatePosition = hasGps
-        ? {
-            x: maxLon === minLon ? 50 : 18 + (((item.location.longitude ?? 0) - minLon) / (maxLon - minLon)) * 64,
-            y: maxLat === minLat ? 50 : 18 + ((maxLat - (item.location.latitude ?? 0)) / (maxLat - minLat)) * 64
-          }
-        : undefined;
-      pins.push({
-        id: hasGps ? `gps-${item.id}` : placeKey,
-        title: broadPlaceLabel(item.location),
-        city: item.location.city,
-        state: item.location.state,
-        country: item.location.country,
-        latitude: item.location.latitude,
-        longitude: item.location.longitude,
-        hasCoordinates: hasGps,
+      const nextPin: PlacePin = {
+        id: placeIdentity(log, fallbackKey, pins.length),
+        title: placeTitle(log),
+        city: log.location.city,
+        state: log.location.state,
+        country: log.location.country,
+        latitude: placeLatitude(log),
+        longitude: placeLongitude(log),
+        hasCoordinates: hasCoordinates(log),
+        hasNamedPlace: hasNamedPlace(log),
         visitCount: 0,
         beerCount: 0,
-        visitors: [],
+        firstVisit: log.createdAt,
+        lastVisit: log.createdAt,
         photos: [],
-        x: coordinatePosition?.x ?? 28 + ((index * 17) % 46),
-        y: coordinatePosition?.y ?? 22 + ((index * 19) % 52),
-        latestAt: item.createdAt
-      });
-      addCheckInToPin(pins[pins.length - 1], item);
+        logs: [],
+        visits: []
+      };
+      addLogToPin(nextPin, log);
+      pins.push(nextPin);
     });
 
-  return pins.sort((a, b) => new Date(b.latestAt).getTime() - new Date(a.latestAt).getTime());
+  return pins.sort((a, b) => new Date(b.lastVisit).getTime() - new Date(a.lastVisit).getTime());
 }
 
-function latestFriendCheckIns(checkIns: BeerCheckIn[], friendIds: Set<string>) {
-  const latestByFriend = new Map<string, BeerCheckIn>();
-  checkIns.forEach((checkIn) => {
-    if (!friendIds.has(checkIn.userId)) return;
-    const existing = latestByFriend.get(checkIn.userId);
-    if (!existing || new Date(checkIn.createdAt).getTime() > new Date(existing.createdAt).getTime()) {
-      latestByFriend.set(checkIn.userId, checkIn);
-    }
-  });
-  return Array.from(latestByFriend.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+function addLogToPin(pin: PlacePin, log: BeerCheckIn) {
+  const previousCount = pin.logs.length;
+  pin.logs.push(log);
+  pin.beerCount += log.quantity ?? 1;
+  pin.firstVisit = new Date(log.createdAt).getTime() < new Date(pin.firstVisit).getTime() ? log.createdAt : pin.firstVisit;
+  pin.lastVisit = new Date(log.createdAt).getTime() > new Date(pin.lastVisit).getTime() ? log.createdAt : pin.lastVisit;
+
+  if (pin.hasCoordinates && hasCoordinates(log) && typeof pin.latitude === "number" && typeof pin.longitude === "number") {
+    pin.latitude = (pin.latitude * previousCount + (log.location.latitude as number)) / Math.max(1, previousCount + 1);
+    pin.longitude = (pin.longitude * previousCount + (log.location.longitude as number)) / Math.max(1, previousCount + 1);
+  }
+
+  const dateKey = localDateKey(log.createdAt);
+  const visit = pin.visits.find((item) => item.dateKey === dateKey);
+  if (visit) {
+    visit.logs.push(log);
+  } else {
+    pin.visits.push({ dateKey, date: new Date(`${dateKey}T12:00:00`), logs: [log] });
+  }
+  pin.visits.sort((a, b) => b.date.getTime() - a.date.getTime());
+  pin.visitCount = pin.visits.length;
+
+  const uri = photoFor(log);
+  if (uri) {
+    pin.photos.unshift({
+      id: log.id,
+      uri
+    });
+  }
 }
 
-function ScopeButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+function SelectedLocationCard({
+  pin,
+  hasPlaces,
+  onLogBeer,
+  onViewHistory,
+  onPhotoPress,
+  theme
+}: {
+  pin: PlacePin | null;
+  hasPlaces: boolean;
+  onLogBeer: () => void;
+  onViewHistory: () => void;
+  onPhotoPress: (uri: string) => void;
+  theme: AppTheme;
+}) {
+  if (!pin) {
+    return (
+      <View style={cardStyle(theme, 18, 24)}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+          <Image source={mapPromptMascot} style={{ width: 66, height: 66 }} resizeMode="contain" />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 19 }}>{hasPlaces ? "Select a place" : "No places stamped yet."}</Text>
+            <Text numberOfLines={2} style={{ color: theme.colors.textSecondary, lineHeight: 17, marginTop: 5, fontSize: 13 }}>
+              {hasPlaces ? "Tap a map marker or a place below to view its passport history." : "Log a beer to start building your beer passport."}
+            </Text>
+            {!hasPlaces ? (
+              <Pressable onPress={onLogBeer} style={primaryPill(theme)}>
+                <Ionicons name="camera-outline" color={theme.colors.textOnPrimary} size={18} />
+                <Text style={{ color: theme.colors.textOnPrimary, fontWeight: "900" }}>Log Beer</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      </View>
+    );
+  }
+
   return (
-    <Pressable
-      onPress={onPress}
-      style={{
-        flex: 1,
-        alignItems: "center",
-        paddingVertical: 10,
-        borderRadius: theme.radius.pill,
-        backgroundColor: active ? theme.colors.neon : "transparent"
-      }}
-    >
-      <Text style={{ color: active ? theme.colors.ink : theme.colors.muted, fontWeight: "900" }}>{label}</Text>
+    <View style={cardStyle(theme, 18, 24)}>
+      <Text style={{ color: theme.colors.accent, fontSize: 11, fontWeight: "900", letterSpacing: 1.6 }}>SELECTED PLACE</Text>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12, marginTop: 7 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 24 }}>{pin.title}</Text>
+          <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>{placeSubtitle(pin)}</Text>
+        </View>
+        <View style={{ width: 48, height: 48, borderRadius: 18, backgroundColor: theme.colors.accentSoft, alignItems: "center", justifyContent: "center" }}>
+          <Ionicons name="location-outline" color={theme.colors.accent} size={23} />
+        </View>
+      </View>
+
+      <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
+        <MiniMetric label="Visits" value={pin.visitCount} theme={theme} />
+        <MiniMetric label="Beers Logged" value={pin.beerCount} theme={theme} />
+      </View>
+
+      <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+        <DateMetric label="First visit" value={formatVisitDate(pin.firstVisit)} theme={theme} />
+        <DateMetric label="Last visit" value={formatVisitDate(pin.lastVisit)} theme={theme} />
+      </View>
+
+      <PhotoStrip photos={pin.photos.slice(0, 5)} onPhotoPress={onPhotoPress} theme={theme} />
+
+      <Pressable onPress={onViewHistory} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 16, borderTopWidth: 1, borderTopColor: theme.colors.cardBorder, paddingTop: 15 }}>
+        <Text style={{ color: theme.colors.accent, fontWeight: "900" }}>View History</Text>
+        <Ionicons name="chevron-forward" color={theme.colors.accent} size={18} />
+      </Pressable>
+    </View>
+  );
+}
+
+function LocationHistoryModal({ pin, onClose, theme }: { pin: PlacePin | null; onClose: () => void; theme: AppTheme }) {
+  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+  if (!pin) return null;
+  return (
+    <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }}>
+        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 48 }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: theme.colors.accent, fontSize: 12, fontWeight: "900", letterSpacing: 1.7 }}>PLACE HISTORY</Text>
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 31, marginTop: 5 }}>{pin.title}</Text>
+              <Text style={{ color: theme.colors.textSecondary, marginTop: 6 }}>{placeSubtitle(pin)}</Text>
+            </View>
+            <Pressable onPress={onClose} hitSlop={8} style={{ padding: 8 }}>
+              <Ionicons name="close" color={theme.colors.textPrimary} size={28} />
+            </Pressable>
+          </View>
+
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 22 }}>
+            <MiniMetric label="Visits" value={pin.visitCount} theme={theme} />
+            <MiniMetric label="Beers Logged" value={pin.beerCount} theme={theme} />
+          </View>
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
+            <DateMetric label="First visit" value={formatVisitDate(pin.firstVisit)} theme={theme} />
+            <DateMetric label="Last visit" value={formatVisitDate(pin.lastVisit)} theme={theme} />
+          </View>
+
+          <View style={{ gap: 10, marginTop: 18 }}>
+            <SectionHeader title="Visits" theme={theme} />
+            {pin.visits.map((visit) => {
+              const beers = visit.logs.reduce((total, log) => total + (log.quantity ?? 1), 0);
+              return (
+                <View key={visit.dateKey} style={cardStyle(theme, 14, theme.radius.md)}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
+                    <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 16 }}>{visit.date.toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" })}</Text>
+                    <Text style={{ color: theme.colors.accent, fontWeight: "900" }}>{beers} {beers === 1 ? "beer" : "beers"}</Text>
+                  </View>
+                  {visit.logs.map((log) => (
+                    <VisitLogRow key={log.id} log={log} onPhotoPress={setPreviewPhoto} theme={theme} />
+                  ))}
+                </View>
+              );
+            })}
+          </View>
+        </ScrollView>
+        {previewPhoto ? <InlinePhotoPreview uri={previewPhoto} onClose={() => setPreviewPhoto(null)} theme={theme} /> : null}
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function VisitLogRow({ log, onPhotoPress, theme }: { log: BeerCheckIn; onPhotoPress: (uri: string) => void; theme: AppTheme }) {
+  const photo = photoFor(log);
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 }}>
+      {photo ? (
+        <Pressable onPress={() => onPhotoPress(photo)} hitSlop={6}>
+          <Image source={{ uri: photo }} style={{ width: 52, height: 52, borderRadius: 13, backgroundColor: theme.colors.surfaceAlt }} resizeMode="cover" />
+        </Pressable>
+      ) : (
+        <View style={{ width: 52, height: 52, borderRadius: 13, backgroundColor: theme.colors.surfaceAlt, alignItems: "center", justifyContent: "center" }}>
+          <Ionicons name="beer-outline" color={theme.colors.accent} size={20} />
+        </View>
+      )}
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>{cleanBeerName(log)}</Text>
+        <Text style={{ color: theme.colors.textSecondary, marginTop: 3, fontSize: 12 }}>{new Date(log.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</Text>
+      </View>
+    </View>
+  );
+}
+
+function PlaceRow({ pin, active, onPress, theme }: { pin: PlacePin; active: boolean; onPress: () => void; theme: AppTheme }) {
+  const thumb = pin.photos[0]?.uri;
+  return (
+    <Pressable onPress={onPress} style={{ ...cardStyle(theme, 12, theme.radius.lg), borderColor: active ? theme.colors.accent : theme.colors.cardBorder, backgroundColor: active ? theme.colors.accentSoft : theme.colors.card }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+        {thumb ? (
+          <Image source={{ uri: thumb }} style={{ width: 54, height: 54, borderRadius: 16, backgroundColor: theme.colors.surfaceAlt }} resizeMode="cover" />
+        ) : (
+          <View style={{ width: 54, height: 54, borderRadius: 16, backgroundColor: theme.colors.surfaceAlt, alignItems: "center", justifyContent: "center" }}>
+            <Ionicons name="location-outline" color={theme.colors.accent} size={22} />
+          </View>
+        )}
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 16 }}>{pin.title}</Text>
+          <Text style={{ color: theme.colors.textSecondary, marginTop: 3 }}>{placeSubtitle(pin)}</Text>
+        </View>
+        <View style={{ alignItems: "flex-end" }}>
+          <Text style={{ color: theme.colors.accent, fontWeight: "900" }}>{formatNumber(pin.beerCount)}</Text>
+          <Text style={{ color: theme.colors.textMuted, fontWeight: "800", fontSize: 11 }}>beers</Text>
+        </View>
+        <Ionicons name="chevron-forward" color={theme.colors.iconSecondary} size={18} />
+      </View>
     </Pressable>
   );
 }
 
-function addCheckInToPin(pin: Pin, item: BeerCheckIn) {
-  const previousVisits = pin.visitCount;
-  pin.visitCount += 1;
-  pin.beerCount += item.quantity ?? 1;
-  pin.latestAt = new Date(item.createdAt).getTime() > new Date(pin.latestAt).getTime() ? item.createdAt : pin.latestAt;
-  if (!pin.visitors.includes(item.userName)) pin.visitors.push(item.userName);
-
-  if (pin.hasCoordinates && hasCoordinates(item) && typeof pin.latitude === "number" && typeof pin.longitude === "number") {
-    pin.latitude = (pin.latitude * previousVisits + (item.location.latitude as number)) / pin.visitCount;
-    pin.longitude = (pin.longitude * previousVisits + (item.location.longitude as number)) / pin.visitCount;
-  }
-
-  const photoUri = item.photoUrl ?? item.photoUri;
-  if (photoUri) {
-    pin.photos.unshift({
-      id: item.id,
-      fullUri: photoUri,
-      thumbnailUri: item.photoThumbnailUrl ?? photoUri,
-      createdAt: item.createdAt,
-      beerCount: item.quantity ?? 1,
-      userName: item.userName
-    });
-  }
+function PhotoStrip({ photos, onPhotoPress, theme }: { photos: PlacePhoto[]; onPhotoPress: (uri: string) => void; theme: AppTheme }) {
+  return (
+    <View style={{ marginTop: 16 }}>
+      {photos.length ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {photos.map((photo) => (
+              <Pressable key={photo.id} onPress={() => onPhotoPress(photo.uri)} hitSlop={6}>
+                <Image source={{ uri: photo.uri }} style={{ width: 72, height: 84, borderRadius: 14, backgroundColor: theme.colors.surfaceAlt }} resizeMode="cover" />
+              </Pressable>
+            ))}
+          </View>
+        </ScrollView>
+      ) : (
+        <View style={{ minHeight: 74, borderRadius: theme.radius.md, backgroundColor: theme.colors.surfaceAlt, borderWidth: 1, borderColor: theme.colors.cardBorder, alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <Ionicons name="images-outline" color={theme.colors.accent} size={21} />
+          <Text style={{ color: theme.colors.textSecondary, fontWeight: "800", fontSize: 12 }}>No thumbnails yet</Text>
+        </View>
+      )}
+    </View>
+  );
 }
 
-function fallbackPlaceKey(item: BeerCheckIn) {
-  return `place-${[item.location.city, item.location.state, item.location.country].map((part) => part?.trim().toLowerCase() || "unknown").join("-")}`;
+function PassportStat({ label, value, theme }: { label: string; value: number; theme: AppTheme }) {
+  return (
+    <View style={{ flex: 1, backgroundColor: theme.colors.card, borderWidth: 1, borderColor: theme.colors.cardBorder, borderRadius: theme.radius.lg, padding: 14, ...theme.shadow.card }}>
+      <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 23 }}>{formatNumber(value)}</Text>
+      <Text style={{ color: theme.colors.textSecondary, fontWeight: "800", fontSize: 11, marginTop: 4 }}>{label}</Text>
+    </View>
+  );
 }
 
-function hasCoordinates(item: BeerCheckIn) {
-  return typeof item.location.latitude === "number" && typeof item.location.longitude === "number";
+function MiniMetric({ label, value, theme }: { label: string; value: number; theme: AppTheme }) {
+  return (
+    <View style={{ flex: 1, backgroundColor: theme.colors.surfaceAlt, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.cardBorder, padding: 12 }}>
+      <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 21 }}>{formatNumber(value)}</Text>
+      <Text style={{ color: theme.colors.textSecondary, fontWeight: "800", fontSize: 11, marginTop: 3 }}>{label}</Text>
+    </View>
+  );
+}
+
+function DateMetric({ label, value, theme }: { label: string; value: string; theme: AppTheme }) {
+  return (
+    <View style={{ flex: 1, backgroundColor: theme.colors.surfaceAlt, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.cardBorder, padding: 12 }}>
+      <Text style={{ color: theme.colors.textMuted, fontWeight: "800", fontSize: 11 }}>{label}</Text>
+      <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", marginTop: 4 }}>{value}</Text>
+    </View>
+  );
+}
+
+function SectionHeader({ title, detail, theme }: { title: string; detail?: string; theme: AppTheme }) {
+  return (
+    <View>
+      <Text style={{ color: theme.colors.textPrimary, fontSize: 21, fontWeight: "900" }}>{title}</Text>
+      {detail ? <Text style={{ color: theme.colors.textSecondary, marginTop: 4, lineHeight: 19 }}>{detail}</Text> : null}
+    </View>
+  );
+}
+
+function EmptyPassportCard({ title, body, actionLabel, onAction, theme }: { title: string; body: string; actionLabel: string; onAction: () => void; theme: AppTheme }) {
+  return (
+    <View style={cardStyle(theme, 18, theme.radius.lg)}>
+      <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 17 }}>{title}</Text>
+      <Text style={{ color: theme.colors.textSecondary, lineHeight: 20, marginTop: 6 }}>{body}</Text>
+      <Pressable onPress={onAction} style={primaryPill(theme)}>
+        <Ionicons name="camera-outline" color={theme.colors.textOnPrimary} size={18} />
+        <Text style={{ color: theme.colors.textOnPrimary, fontWeight: "900" }}>{actionLabel}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function cardStyle(theme: AppTheme, padding = 16, radius = theme.radius.lg) {
+  return {
+    backgroundColor: theme.colors.card,
+    borderRadius: radius,
+    borderWidth: 1,
+    borderColor: theme.colors.cardBorder,
+    padding,
+    ...theme.shadow.card
+  };
+}
+
+function primaryPill(theme: AppTheme) {
+  return {
+    alignSelf: "flex-start" as const,
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 8,
+    backgroundColor: theme.colors.accent,
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 15,
+    paddingVertical: 11,
+    marginTop: 15
+  };
+}
+
+function placeTitle(log: BeerCheckIn) {
+  if (log.venueConfirmationStatus === "confirmed" && log.venueName?.trim()) return log.venueName.trim();
+  const brewery = log.brewery?.trim();
+  if (brewery && !["photo stamp", "beer log", "pintly log", "check-in"].some((value) => brewery.toLowerCase().includes(value))) return brewery;
+  return broadPlaceLabel(log.location);
+}
+
+function hasNamedPlace(log: BeerCheckIn) {
+  if (log.venueConfirmationStatus === "confirmed" && log.venueName?.trim()) return true;
+  const brewery = log.brewery?.trim();
+  return Boolean(brewery && !["photo stamp", "beer log", "pintly log", "check-in"].some((value) => brewery.toLowerCase().includes(value)));
+}
+
+function placeSubtitle(pin: PlacePin) {
+  const cityState = [pin.city, pin.state].filter(Boolean).join(", ");
+  if (cityState) return cityState;
+  return pin.country || "Unknown location";
+}
+
+function cleanBeerName(log: BeerCheckIn) {
+  const normalized = log.beerName.trim().toLowerCase();
+  return ["photo stamp", "beer log"].includes(normalized) ? "Beer log" : log.beerName;
+}
+
+function placeKey(log: BeerCheckIn) {
+  if (log.venueConfirmationStatus === "confirmed" && log.venueProvider && log.venueProviderPlaceId) {
+    return `${log.venueProvider}-${log.venueProviderPlaceId}`;
+  }
+  return [placeTitle(log), log.location.city, log.location.state, log.location.country]
+    .map((part) => part?.trim().toLowerCase().replace(/\s+/g, "-") || "unknown")
+    .join("-");
+}
+
+function placeIdentity(log: BeerCheckIn, fallbackKey: string, index: number) {
+  if (log.venueConfirmationStatus === "confirmed" && log.venueProvider && log.venueProviderPlaceId) return fallbackKey;
+  return hasCoordinates(log) ? `gps-${fallbackKey}-${index}` : fallbackKey;
+}
+
+function placeLatitude(log: BeerCheckIn) {
+  return log.venueConfirmationStatus === "confirmed" ? log.venueLatitude ?? log.location.latitude : log.location.latitude;
+}
+
+function placeLongitude(log: BeerCheckIn) {
+  return log.venueConfirmationStatus === "confirmed" ? log.venueLongitude ?? log.location.longitude : log.location.longitude;
+}
+
+function photoFor(log: BeerCheckIn) {
+  return buildCloudflareImageUrl(log.photoCloudflareImageId, "feed") ?? log.photoUrl ?? log.photoUri ?? log.photoThumbnailUrl ?? buildCloudflareImageUrl(log.photoCloudflareImageId, "thumbnail");
+}
+
+function PhotoPreviewModal({ uri, onClose, theme }: { uri: string | null; onClose: () => void; theme: AppTheme }) {
+  return <ZoomablePhotoModal visible={Boolean(uri)} uri={uri} onClose={onClose} theme={theme} />;
+}
+
+function InlinePhotoPreview({ uri, onClose, theme }: { uri: string; onClose: () => void; theme: AppTheme }) {
+  return <ZoomablePhotoModal visible uri={uri} onClose={onClose} theme={theme} />;
+}
+
+function formatVisitDate(iso: string) {
+  return new Date(iso).toLocaleDateString([], { month: "short", year: "numeric" });
+}
+
+function localDateKey(iso: string) {
+  const date = new Date(iso);
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function hasCoordinates(log: BeerCheckIn) {
+  return typeof log.location.latitude === "number" && typeof log.location.longitude === "number";
 }
 
 function distanceMeters(latA: number, lonA: number, latB: number, lonB: number) {
@@ -374,163 +597,4 @@ function distanceMeters(latA: number, lonA: number, latB: number, lonB: number) 
 
 function toRadians(value: number) {
   return (value * Math.PI) / 180;
-}
-
-function LocationSummary({
-  pin,
-  scope,
-  onEmptyAction,
-  onViewPhotos,
-  onPhotosLayout
-}: {
-  pin?: Pin | null;
-  scope: "mine" | "friends";
-  onEmptyAction?: () => void;
-  onViewPhotos?: () => void;
-  onPhotosLayout?: (y: number) => void;
-}) {
-  const [previewPhoto, setPreviewPhoto] = useState<PinPhoto | null>(null);
-  const visiblePhotos = pin?.photos.slice(0, 8) ?? [];
-
-  if (!pin) {
-    return (
-      <View>
-        <Text style={{ color: theme.colors.text, fontWeight: "900" }}>No locations yet</Text>
-        <Text style={{ color: theme.colors.muted, marginTop: 4 }}>
-          {scope === "mine" ? "Check in a beer to add your first map stamp." : "Add friends to see their latest drinking locations here."}
-        </Text>
-        {onEmptyAction && scope === "mine" ? (
-          <Pressable
-            onPress={onEmptyAction}
-            style={{
-              alignSelf: "flex-start",
-              backgroundColor: theme.colors.neon,
-              borderRadius: theme.radius.pill,
-              paddingHorizontal: 14,
-              paddingVertical: 10,
-              marginTop: 14
-            }}
-          >
-            <Text style={{ color: theme.colors.ink, fontWeight: "900" }}>Log First Beer</Text>
-          </Pressable>
-        ) : null}
-      </View>
-    );
-  }
-
-  return (
-    <View>
-      <Text style={{ color: theme.colors.gold, fontWeight: "900", letterSpacing: 1, fontSize: 12 }}>
-        {scope === "mine" ? "SELECTED STAMP" : "FRIEND LAST LOG"}
-      </Text>
-      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10, marginTop: 5 }}>
-        <Text style={{ color: theme.colors.text, fontSize: 19, fontWeight: "900", flex: 1 }}>{pin.title}</Text>
-        {pin.photos.length ? (
-          <Pressable
-            onPress={onViewPhotos}
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 5,
-              backgroundColor: theme.colors.neonSoft,
-              borderWidth: 1,
-              borderColor: theme.colors.neon,
-              borderRadius: theme.radius.pill,
-              paddingHorizontal: 10,
-              paddingVertical: 7
-            }}
-          >
-            <Ionicons name="images-outline" color={theme.colors.neon} size={15} />
-            <Text style={{ color: theme.colors.neon, fontWeight: "900", fontSize: 12 }}>Photos</Text>
-          </Pressable>
-        ) : null}
-      </View>
-      <Text style={{ color: theme.colors.muted, marginTop: 3 }}>
-        {pin.visitors.join(", ")}
-      </Text>
-      <Text style={{ color: pin.hasCoordinates ? theme.colors.neon : theme.colors.dim, marginTop: 5, fontSize: 12, fontWeight: "800" }}>
-        {pin.hasCoordinates ? `GPS clustered within ${SAME_PLACE_METERS}m` : "City-based location"}
-      </Text>
-      <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
-        <Mini label={scope === "mine" ? "Visits" : "Friends"} value={scope === "mine" ? pin.visitCount : pin.visitors.length} />
-        <Mini label="Beers" value={pin.beerCount} />
-        <Mini label="Photos" value={pin.photos.length} />
-      </View>
-      <Text style={{ color: theme.colors.dim, marginTop: 12, fontSize: 12, lineHeight: 18 }}>
-        {scope === "mine" ? "This pin combines logs from the same physical place." : "Friend mode only shows each friend's most recent shared beer location."}
-      </Text>
-      <View
-        onLayout={(event) => {
-          onPhotosLayout?.(event.nativeEvent.layout.y);
-        }}
-        style={{ marginTop: 14 }}
-      >
-        <Text style={{ color: theme.colors.text, fontWeight: "900", marginBottom: 10 }}>Photos from this place</Text>
-        {visiblePhotos.length ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              {visiblePhotos.map((photo) => (
-                <Pressable key={photo.id} onPress={() => setPreviewPhoto(photo)}>
-                  <Image
-                    source={{ uri: photo.thumbnailUri }}
-                    style={{
-                      width: 92,
-                      height: 116,
-                      borderRadius: theme.radius.md,
-                      backgroundColor: theme.colors.surface
-                    }}
-                  />
-                  <View
-                    style={{
-                      position: "absolute",
-                      left: 6,
-                      bottom: 6,
-                      borderRadius: theme.radius.pill,
-                      backgroundColor: "rgba(0,0,0,0.72)",
-                      paddingHorizontal: 8,
-                      paddingVertical: 4
-                    }}
-                  >
-                    <Text style={{ color: theme.colors.neon, fontSize: 11, fontWeight: "900" }}>{photo.beerCount} beers</Text>
-                  </View>
-                </Pressable>
-              ))}
-            </View>
-          </ScrollView>
-        ) : (
-          <Text style={{ color: theme.colors.muted, lineHeight: 20 }}>No photos were attached to the logs at this place yet.</Text>
-        )}
-      </View>
-      <Modal visible={Boolean(previewPhoto)} transparent animationType="fade" onRequestClose={() => setPreviewPhoto(null)}>
-        <Pressable
-          onPress={() => setPreviewPhoto(null)}
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.9)",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 20
-          }}
-        >
-          {previewPhoto ? (
-            <Image
-              source={{ uri: previewPhoto.fullUri }}
-              resizeMode="contain"
-              style={{ width: "100%", height: "78%", borderRadius: theme.radius.lg }}
-            />
-          ) : null}
-          <Text style={{ color: theme.colors.text, fontWeight: "900", marginTop: 14 }}>Tap anywhere to close</Text>
-        </Pressable>
-      </Modal>
-    </View>
-  );
-}
-
-function Mini({ label, value }: { label: string; value: number }) {
-  return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.surface, borderRadius: theme.radius.md, padding: 10 }}>
-      <Text style={{ color: theme.colors.neon, fontSize: 20, fontWeight: "900" }}>{value}</Text>
-      <Text style={{ color: theme.colors.muted, marginTop: 2, fontSize: 12 }}>{label}</Text>
-    </View>
-  );
 }

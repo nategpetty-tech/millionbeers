@@ -1,14 +1,45 @@
+import * as Sentry from "@sentry/react-native";
+import * as Updates from "expo-updates";
 import { Stack } from "expo-router";
 import { useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { AuthGate } from "@/components/AuthGate";
 import { OnboardingModal } from "@/components/OnboardingModal";
+import { screenshotDemoEnabled } from "@/config/features";
+import { registerForGroupBeerNotifications } from "@/services/notifications";
 import { AuthProvider, useAuth } from "@/store/authStore";
 import { PassportProvider } from "@/store/passportStore";
-import { theme } from "@/theme";
+import { AppThemeProvider, useAppTheme, useThemePreference } from "@/theme";
+import { useEffect } from "react";
 
-export default function RootLayout() {
+const sentryDsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
+const isSentryEnabled = Boolean(sentryDsn);
+
+if (isSentryEnabled) {
+  Sentry.init({
+    dsn: sentryDsn,
+    environment: __DEV__ ? "development" : "production",
+    sendDefaultPii: false,
+    tracesSampleRate: __DEV__ ? 1 : 0.1
+  });
+
+  const scope = Sentry.getGlobalScope();
+  scope.setTag("expo-update-id", Updates.updateId ?? "embedded");
+  scope.setTag("expo-is-embedded-update", String(Updates.isEmbeddedLaunch));
+}
+
+function RootLayout() {
+  return (
+    <AppThemeProvider>
+      <ThemedRoot />
+    </AppThemeProvider>
+  );
+}
+
+function ThemedRoot() {
+  const theme = useAppTheme();
+
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <AuthProvider>
@@ -20,13 +51,24 @@ export default function RootLayout() {
 
 function AuthenticatedApp() {
   const { loading, profile } = useAuth();
+  const { resolvedTheme, theme } = useThemePreference();
   const segments = useSegments();
   const isResetPasswordRoute = segments[0] === "reset-password";
+  const statusBarStyle = resolvedTheme === "light" ? "dark" : "light";
+
+  useEffect(() => {
+    if (!profile?.id) return;
+    if (isSentryEnabled) {
+      Sentry.setUser({ id: profile.id, username: profile.username, name: profile.displayName });
+    }
+    if (screenshotDemoEnabled) return;
+    void registerForGroupBeerNotifications(profile.id);
+  }, [profile?.displayName, profile?.id, profile?.username]);
 
   if (isResetPasswordRoute) {
     return (
       <>
-        <StatusBar style="light" />
+        <StatusBar style={statusBarStyle} />
         <Stack
           screenOptions={{
             headerShown: false,
@@ -40,7 +82,7 @@ function AuthenticatedApp() {
   if (loading || !profile) {
     return (
       <>
-        <StatusBar style="light" />
+        <StatusBar style={statusBarStyle} />
         <AuthGate>
           <Stack
             screenOptions={{
@@ -55,7 +97,7 @@ function AuthenticatedApp() {
 
   return (
     <PassportProvider key={profile.id} authenticatedUser={profile}>
-      <StatusBar style="light" />
+      <StatusBar style={statusBarStyle} />
       <AuthGate>
         <Stack
           screenOptions={{
@@ -68,3 +110,5 @@ function AuthenticatedApp() {
     </PassportProvider>
   );
 }
+
+export default isSentryEnabled ? Sentry.wrap(RootLayout) : RootLayout;

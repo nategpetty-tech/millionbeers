@@ -9,13 +9,13 @@ type Props = {
   color?: string;
 };
 
-export function ProgressBar({ current, goal, height = 9, color = theme.colors.neon }: Props) {
+export function ProgressBar({ current, goal, height = 9, color = theme.colors.primary }: Props) {
   return (
     <View
       style={{
         height,
         borderRadius: theme.radius.pill,
-        backgroundColor: "#1B2423",
+        backgroundColor: theme.colors.progressTrack,
         overflow: "hidden"
       }}
     >

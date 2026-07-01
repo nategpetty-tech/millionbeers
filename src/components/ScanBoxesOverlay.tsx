@@ -1,5 +1,5 @@
 import { Text, View } from "react-native";
-import { theme } from "@/theme";
+import { useAppTheme } from "@/theme";
 import type { BeerScanBox } from "@/types";
 
 type Props = {
@@ -9,6 +9,7 @@ type Props = {
 };
 
 export function ScanBoxesOverlay({ boxes = [], photoSize, previewSize }: Props) {
+  const theme = useAppTheme();
   if (!boxes.length || !photoSize || !previewSize.width || !previewSize.height) return null;
   const frame = containedFrame(photoSize, previewSize);
 
@@ -24,9 +25,9 @@ export function ScanBoxesOverlay({ boxes = [], photoSize, previewSize }: Props) 
             width: box.width * frame.width,
             height: box.height * frame.height,
             borderWidth: 2,
-            borderColor: theme.colors.neon,
+            borderColor: theme.colors.primary,
             borderRadius: 6,
-            backgroundColor: "rgba(132, 232, 107, 0.08)"
+            backgroundColor: theme.colors.scanOverlay
           }}
         >
           <View
@@ -37,10 +38,10 @@ export function ScanBoxesOverlay({ boxes = [], photoSize, previewSize }: Props) 
               paddingHorizontal: 7,
               paddingVertical: 3,
               borderRadius: theme.radius.pill,
-              backgroundColor: theme.colors.neon
+              backgroundColor: theme.colors.primary
             }}
           >
-            <Text style={{ color: theme.colors.ink, fontSize: 10, fontWeight: "900" }}>{Math.round(box.confidence * 100)}%</Text>
+            <Text style={{ color: theme.colors.textOnPrimary, fontSize: 10, fontWeight: "900" }}>{Math.round(box.confidence * 100)}%</Text>
           </View>
         </View>
       ))}

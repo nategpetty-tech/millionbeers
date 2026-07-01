@@ -17,20 +17,20 @@ export function LeaderboardRow({ member, rank, mode }: Props) {
         flexDirection: "row",
         alignItems: "center",
         gap: 12,
-        backgroundColor: member.isCurrentUser ? theme.colors.neonSoft : theme.colors.card,
+        backgroundColor: member.isCurrentUser ? theme.colors.primarySoft : theme.colors.card,
         borderWidth: 1,
-        borderColor: member.isCurrentUser ? theme.colors.neon : theme.colors.border,
+        borderColor: member.isCurrentUser ? theme.colors.primary : theme.colors.cardBorder,
         borderRadius: theme.radius.md,
         padding: 13,
         marginBottom: 9
       }}
     >
-      <Text style={{ color: member.isCurrentUser ? theme.colors.neon : theme.colors.gold, width: 22, fontWeight: "900", fontSize: 16 }}>{rank}</Text>
-      <Avatar label={member.avatar} uri={member.avatarUrl} size={40} borderColor={member.isCurrentUser ? theme.colors.neon : theme.colors.border} />
-      <Text style={{ color: theme.colors.text, flex: 1, fontWeight: "900" }}>{member.name}</Text>
+      <Text style={{ color: member.isCurrentUser ? theme.colors.primary : theme.colors.primary, width: 22, fontWeight: "900", fontSize: 16 }}>{rank}</Text>
+      <Avatar label={member.avatar} uri={member.avatarUrl} size={40} borderColor={member.isCurrentUser ? theme.colors.primary : theme.colors.cardBorder} />
+      <Text style={{ color: theme.colors.textPrimary, flex: 1, fontWeight: "900" }}>{member.name}</Text>
       <View style={{ alignItems: "flex-end" }}>
-        <Text style={{ color: theme.colors.text, fontWeight: "900", fontSize: 18 }}>{count}</Text>
-        <Text style={{ color: theme.colors.muted, fontSize: 10, fontWeight: "800" }}>{mode === "beers" ? "BEERS" : "CHECK-INS"}</Text>
+        <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 18 }}>{count}</Text>
+        <Text style={{ color: theme.colors.textSecondary, fontSize: 10, fontWeight: "800" }}>{mode === "beers" ? "BEERS" : "CHECK-INS"}</Text>
       </View>
     </View>
   );

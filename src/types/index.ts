@@ -18,11 +18,44 @@ export type Location = {
   longitude?: number;
 };
 
+export type VenueConfirmationStatus = "confirmed" | "skipped" | "unavailable";
+export type VenueSelectionStatus = "confirmed" | "changed" | "skipped" | "unavailable";
+
+export type VenueCandidate = {
+  provider: "google_places" | "foursquare" | "yelp" | "mock";
+  providerPlaceId: string;
+  name: string;
+  category?: string;
+  latitude: number;
+  longitude: number;
+  address?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  distanceMeters?: number;
+  confidence?: number;
+};
+
+export type CheckInVenueProvider = VenueCandidate["provider"] | "manual" | "skipped" | "unavailable";
+
 export type ReactionUser = {
   id: string;
   name: string;
   avatar: string;
   avatarUrl?: string;
+  avatarCloudflareImageId?: string;
+};
+
+export type BeerComment = {
+  id: string;
+  checkInId: string;
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  userAvatarUrl?: string;
+  userAvatarCloudflareImageId?: string;
+  body: string;
+  createdAt: string;
 };
 
 export type Brewery = {
@@ -57,6 +90,7 @@ export type GroupMember = {
   name: string;
   avatar: string;
   avatarUrl?: string;
+  avatarCloudflareImageId?: string;
   beerCount: number;
   checkInCount: number;
   isCurrentUser?: boolean;
@@ -68,6 +102,7 @@ export type GroupJoinRequest = {
   name: string;
   avatar: string;
   avatarUrl?: string;
+  avatarCloudflareImageId?: string;
   requestedAt: string;
   source: "search" | "invite";
   status: "pending" | "approved" | "rejected";
@@ -80,6 +115,10 @@ export type Group = {
   image: string;
   backdropUrl?: string;
   backdropStoragePath?: string;
+  backdropCloudflareImageId?: string;
+  backdropImageWidth?: number;
+  backdropImageHeight?: number;
+  backdropBlurhash?: string;
   privacy: "Private" | "Invite Only" | "Public";
   memberCount: number;
   goal: number;
@@ -98,6 +137,7 @@ export type FriendProfile = {
   name: string;
   avatar: string;
   avatarUrl?: string;
+  avatarCloudflareImageId?: string;
   totalBeers?: number;
 };
 
@@ -107,9 +147,33 @@ export type FriendRequest = {
   name: string;
   avatar: string;
   avatarUrl?: string;
+  avatarCloudflareImageId?: string;
   direction: "incoming" | "outgoing";
   status: "pending" | "approved" | "rejected";
   requestedAt: string;
+};
+
+export type ModerationReportStatus = "open" | "reviewed" | "dismissed" | "actioned";
+
+export type UserBlock = {
+  blockedUserId: string;
+  createdAt: string;
+};
+
+export type ModerationReportReason = "harassment" | "hate" | "sexual_content" | "violence" | "spam" | "other";
+
+export type ModerationReport = {
+  id: string;
+  reporterId: string;
+  reportedUserId: string;
+  checkInId?: string;
+  groupId?: string;
+  reason: ModerationReportReason;
+  details?: string;
+  status: ModerationReportStatus;
+  createdAt: string;
+  reporterName?: string;
+  reportedUserName?: string;
 };
 
 export type UserSearchResult = {
@@ -117,6 +181,7 @@ export type UserSearchResult = {
   name: string;
   avatar: string;
   avatarUrl?: string;
+  avatarCloudflareImageId?: string;
   relationship: "none" | "friend" | "incoming" | "outgoing" | "self";
 };
 
@@ -133,14 +198,31 @@ export type BeerCheckIn = {
   abv?: number;
   rating?: number;
   location: Location;
+  venueId?: string;
+  venueProvider?: CheckInVenueProvider;
+  venueProviderPlaceId?: string;
+  venueName?: string;
+  venueCategory?: string;
+  venueLatitude?: number;
+  venueLongitude?: number;
+  venueAddress?: string;
+  venueDistanceMeters?: number;
+  venueConfirmed?: boolean;
+  venueConfirmationStatus?: VenueConfirmationStatus;
+  venueSelectionStatus?: VenueSelectionStatus;
   note?: string;
   photoUri?: string;
   photoUrl?: string;
   photoStoragePath?: string;
   photoThumbnailUrl?: string;
   photoThumbnailStoragePath?: string;
+  photoCloudflareImageId?: string;
+  photoImageWidth?: number;
+  photoImageHeight?: number;
+  photoBlurhash?: string;
   photoSyncStatus?: "local" | "queued" | "syncing" | "synced" | "failed";
   remoteSyncStatus?: "queued" | "syncing" | "synced" | "failed";
+  remoteSyncError?: string;
   scannedBeerCount?: number;
   scanConfidence?: number;
   scanStatus?: "confirmed" | "mismatch" | "uncertain" | "unavailable";
@@ -151,6 +233,7 @@ export type BeerCheckIn = {
   reactions: number;
   reactedBy: string[];
   reactionUsers?: ReactionUser[];
+  comments: BeerComment[];
 };
 
 export type ActivityItem = BeerCheckIn & {
@@ -160,9 +243,14 @@ export type ActivityItem = BeerCheckIn & {
 export type User = {
   id: string;
   name: string;
+  username?: string;
   avatar: string;
   avatarUrl?: string;
   avatarStoragePath?: string;
+  avatarCloudflareImageId?: string;
+  avatarImageWidth?: number;
+  avatarImageHeight?: number;
+  avatarBlurhash?: string;
   hasOnboarded: boolean;
   level: number;
   xp: number;
@@ -173,6 +261,60 @@ export type User = {
   states: number;
   badges: Badge[];
   challengesCompleted: number;
+};
+
+export type GlobalUserRank = {
+  userId: string;
+  totalBeers: number;
+  checkInCount: number;
+  rank: number;
+  totalUsers: number;
+  topPercent: number;
+};
+
+export type GroupMemberProfile = {
+  user: {
+    id: string;
+    displayName: string;
+    username?: string;
+    avatar: string;
+    avatarUrl?: string;
+    avatarCloudflareImageId?: string;
+    createdAt?: string;
+  };
+  group: {
+    id: string;
+    name: string;
+  };
+  level: {
+    label: string;
+    currentXp: number;
+    nextLevelXp: number;
+    points: number;
+    percentile?: number;
+  };
+  stats: {
+    allTimeBeers: number;
+    beersInThisGroup: number;
+    groupCount: number;
+    badgeCount: number;
+    groupRank?: number;
+  };
+  sharedGroups?: Array<{
+    id: string;
+    name: string;
+    beers: number;
+    rank?: number;
+    isViewedGroup?: boolean;
+  }>;
+  recentActivity?: Array<{
+    id: string;
+    type: "beer_log" | "badge" | "challenge";
+    title: string;
+    subtitle?: string;
+    imageUrl?: string;
+    createdAt: string;
+  }>;
 };
 
 export type CheckInInput = {
@@ -192,6 +334,10 @@ export type CheckInInput = {
   photoStoragePath?: string;
   photoThumbnailUrl?: string;
   photoThumbnailStoragePath?: string;
+  photoCloudflareImageId?: string;
+  photoImageWidth?: number;
+  photoImageHeight?: number;
+  photoBlurhash?: string;
   photoSyncStatus?: BeerCheckIn["photoSyncStatus"];
   remoteSyncStatus?: BeerCheckIn["remoteSyncStatus"];
   scannedBeerCount?: number;
@@ -201,6 +347,11 @@ export type CheckInInput = {
   countSource?: "scanner" | "manual";
   latitude?: number;
   longitude?: number;
+  venue?: VenueCandidate;
+  venueProvider?: BeerCheckIn["venueProvider"];
+  venueConfirmed?: boolean;
+  venueConfirmationStatus?: VenueConfirmationStatus;
+  venueSelectionStatus?: VenueSelectionStatus;
 };
 
 export type UpdateCheckInInput = {
@@ -220,6 +371,10 @@ export type UpdateCheckInPhotoInput = {
   photoStoragePath?: string;
   photoThumbnailUrl?: string;
   photoThumbnailStoragePath?: string;
+  photoCloudflareImageId?: string;
+  photoImageWidth?: number;
+  photoImageHeight?: number;
+  photoBlurhash?: string;
   photoSyncStatus?: BeerCheckIn["photoSyncStatus"];
 };
 
@@ -239,17 +394,29 @@ export type CreateGroupInput = {
   description?: string;
   backdropUrl?: string;
   backdropStoragePath?: string;
+  backdropCloudflareImageId?: string;
+  backdropImageWidth?: number;
+  backdropImageHeight?: number;
+  backdropBlurhash?: string;
 };
 
 export type UpdateGroupBackdropInput = {
   backdropUrl?: string;
   backdropStoragePath?: string;
+  backdropCloudflareImageId?: string;
+  backdropImageWidth?: number;
+  backdropImageHeight?: number;
+  backdropBlurhash?: string;
 };
 
 export type UpdateProfileInput = {
   name: string;
   avatarUrl?: string;
   avatarStoragePath?: string;
+  avatarCloudflareImageId?: string;
+  avatarImageWidth?: number;
+  avatarImageHeight?: number;
+  avatarBlurhash?: string;
 };
 
 export type GroupStats = {
