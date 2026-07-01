@@ -128,6 +128,7 @@ export type Group = {
   createdAt: string;
   founderId: string;
   inviteCode: string;
+  notificationsEnabled?: boolean;
   members: GroupMember[];
   pendingRequests: GroupJoinRequest[];
 };

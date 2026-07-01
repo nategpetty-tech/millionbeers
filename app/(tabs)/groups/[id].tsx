@@ -37,6 +37,7 @@ export default function GroupDetailScreen() {
     approveJoinRequest,
     rejectJoinRequest,
     updateGroupBackdrop,
+    updateGroupNotifications,
     reactToCheckIn,
     addCheckInComment,
     deleteCheckInComment,
@@ -114,12 +115,18 @@ export default function GroupDetailScreen() {
   }
 
   function openCrewActions() {
+    if (!group) return;
+    const notificationsEnabled = group.notificationsEnabled ?? true;
     const buttons = [
       { text: "Share invite", onPress: () => void shareInvite() },
+      {
+        text: notificationsEnabled ? "Turn notifications off" : "Turn notifications on",
+        onPress: () => updateGroupNotifications(group.id, !notificationsEnabled)
+      },
       ...(isFounder ? [{ text: "Change backdrop", onPress: () => void changeBackdrop() }] : []),
       { text: "Cancel", style: "cancel" as const }
     ];
-    Alert.alert("Crew actions", group?.name, buttons);
+    Alert.alert("Crew actions", group.name, buttons);
   }
 
   function openMemberProfile(targetUserId: string) {
@@ -223,7 +230,12 @@ export default function GroupDetailScreen() {
 
           {tab === "About" ? (
             <View style={{ gap: 12 }}>
-              <AboutCard group={group} metrics={metrics} theme={theme} />
+              <AboutCard
+                group={group}
+                metrics={metrics}
+                onToggleNotifications={() => updateGroupNotifications(group.id, !(group.notificationsEnabled ?? true))}
+                theme={theme}
+              />
               {isFounder ? (
                 <JoinRequestsCard
                   group={group}
@@ -385,12 +397,12 @@ function CrewActivityRow({
       </View>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-          <View style={{ height: 28, minWidth: 42, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, backgroundColor: theme.colors.card, borderRadius: theme.radius.pill }}>
-            <Pressable onPress={() => onReact(activity.id)} hitSlop={8} style={{ height: 28, justifyContent: "center", paddingLeft: 8 }}>
-              <Ionicons name={reacted ? "heart" : "heart-outline"} color={reacted ? theme.colors.error : theme.colors.textPrimary} size={14} />
+          <View style={{ height: 36, minWidth: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, backgroundColor: theme.colors.card, borderRadius: theme.radius.pill }}>
+            <Pressable onPress={() => onReact(activity.id)} hitSlop={12} style={{ height: 36, justifyContent: "center", paddingLeft: 11 }}>
+              <Ionicons name={reacted ? "heart" : "heart-outline"} color={reacted ? theme.colors.error : theme.colors.textPrimary} size={18} />
             </Pressable>
-            <Pressable onPress={() => setLikersOpen(true)} hitSlop={8} style={{ height: 28, justifyContent: "center", paddingRight: 8, minWidth: 18 }}>
-              <Text style={{ color: reacted ? theme.colors.error : theme.colors.textPrimary, fontWeight: "900", fontSize: 11 }}>{activity.reactions}</Text>
+            <Pressable onPress={() => setLikersOpen(true)} hitSlop={12} style={{ height: 36, justifyContent: "center", paddingRight: 11, minWidth: 22 }}>
+              <Text style={{ color: reacted ? theme.colors.error : theme.colors.textPrimary, fontWeight: "900", fontSize: 13 }}>{activity.reactions}</Text>
             </Pressable>
           </View>
           <CommentButton count={activity.comments.length} onPress={() => setCommentsOpen(true)} theme={theme} compact />
@@ -526,11 +538,43 @@ function LeaderboardRow({ member, rank, currentUserId, onPress, theme }: { membe
   );
 }
 
-function AboutCard({ group, metrics, theme }: { group: Group; metrics: ReturnType<typeof buildGroupMetrics>; theme: AppTheme }) {
+function AboutCard({
+  group,
+  metrics,
+  onToggleNotifications,
+  theme
+}: {
+  group: Group;
+  metrics: ReturnType<typeof buildGroupMetrics>;
+  onToggleNotifications: () => void;
+  theme: AppTheme;
+}) {
   const milestoneProgress = getGroupMilestoneProgress(group.beerCount);
+  const notificationsEnabled = group.notificationsEnabled ?? true;
   return (
     <View style={cardStyle(theme, 16, theme.radius.lg)}>
       <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 18 }}>Crew details</Text>
+      <Pressable
+        onPress={onToggleNotifications}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 10,
+          borderTopWidth: 1,
+          borderTopColor: theme.colors.cardBorder,
+          paddingTop: 11,
+          marginTop: 11
+        }}
+      >
+        <View style={{ width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: notificationsEnabled ? theme.colors.accentSoft : theme.colors.surfaceAlt }}>
+          <Ionicons name={notificationsEnabled ? "notifications-outline" : "notifications-off-outline"} color={notificationsEnabled ? theme.colors.accent : theme.colors.textMuted} size={19} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>Notifications</Text>
+          <Text style={{ color: theme.colors.textSecondary, marginTop: 2 }}>{notificationsEnabled ? "On for this crew" : "Off for this crew"}</Text>
+        </View>
+        <Text style={{ color: theme.colors.accent, fontWeight: "900" }}>{notificationsEnabled ? "Turn off" : "Turn on"}</Text>
+      </Pressable>
       <InfoRow label="Members" value={formatNumber(group.memberCount)} theme={theme} />
       <InfoRow label="Total beers" value={formatNumber(group.beerCount)} theme={theme} />
       <InfoRow label="Created" value={formatDate(group.createdAt)} theme={theme} />

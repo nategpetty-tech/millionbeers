@@ -30,6 +30,7 @@ import {
   updateRemoteCheckInPhoto,
   updateRemoteCheckInScan,
   updateRemoteGroupBackdrop,
+  updateRemoteGroupNotifications,
   upsertProfile
 } from "@/services/pintlyData";
 import { configurePhotoUploadQueue, enqueuePhotoUpload, startPhotoUploadQueueLifecycle } from "@/services/photoUploadQueue";
@@ -82,6 +83,7 @@ type PassportActions = {
   claimUsername: (username: string) => Promise<string>;
   createGroup: (input: CreateGroupInput) => Group;
   updateGroupBackdrop: (groupId: string, input: UpdateGroupBackdropInput) => void;
+  updateGroupNotifications: (groupId: string, enabled: boolean) => void;
   requestJoinGroup: (groupId: string, source?: GroupJoinRequest["source"]) => void;
   requestJoinGroupFromInvite: (group: Group, source?: GroupJoinRequest["source"]) => void;
   cancelJoinRequest: (groupId: string) => void;
@@ -368,6 +370,7 @@ function normalizeStoredState(savedState: PassportState): PassportState {
     ...group,
     founderId: group.founderId ?? savedState.user.id,
     inviteCode: group.inviteCode ?? inviteCodeFor(group.name),
+    notificationsEnabled: group.notificationsEnabled ?? true,
     pendingRequests: group.pendingRequests ?? []
   }));
   const checkIns = savedState.checkIns.map((checkIn) => ({
@@ -630,6 +633,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         createdAt: new Date().toISOString(),
         founderId: state.user.id,
         inviteCode: inviteCodeFor(trimmedName),
+        notificationsEnabled: true,
         members: [
           {
             userId: state.user.id,
@@ -674,6 +678,23 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         return next;
       });
       syncRemote(updateRemoteGroupBackdrop(groupId, input));
+    },
+    [persist]
+  );
+
+  const updateGroupNotifications = useCallback(
+    (groupId: string, enabled: boolean) => {
+      setState((current) => {
+        const nextGroups = current.groups.map((group) =>
+          group.id === groupId && group.members.some((member) => member.userId === current.user.id)
+            ? { ...group, notificationsEnabled: enabled }
+            : group
+        );
+        const next = { ...current, groups: nextGroups };
+        void persist(next);
+        return next;
+      });
+      syncRemote(updateRemoteGroupNotifications(groupId, enabled));
     },
     [persist]
   );
@@ -1427,6 +1448,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       claimUsername,
       createGroup,
       updateGroupBackdrop,
+      updateGroupNotifications,
       requestJoinGroup,
       requestJoinGroupFromInvite,
       cancelJoinRequest,
@@ -1462,6 +1484,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
       claimUsername,
       createGroup,
       updateGroupBackdrop,
+      updateGroupNotifications,
       requestJoinGroup,
       requestJoinGroupFromInvite,
       cancelJoinRequest,

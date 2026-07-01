@@ -73,11 +73,18 @@ Deno.serve(async (request) => {
 
   const { data: memberships, error: membershipError } = await serviceClient
     .from("group_memberships")
-    .select("user_id")
+    .select("user_id,notifications_enabled")
     .in("group_id", groupIds);
   if (membershipError) return json({ error: "Could not load group members." }, 500);
 
-  const recipientIds = Array.from(new Set((memberships ?? []).map((member: { user_id: string }) => member.user_id).filter((id: string) => id !== row.user_id)));
+  const recipientIds = Array.from(
+    new Set(
+      (memberships ?? [])
+        .filter((member: { user_id: string; notifications_enabled?: boolean | null }) => member.notifications_enabled !== false)
+        .map((member: { user_id: string }) => member.user_id)
+        .filter((id: string) => id !== row.user_id)
+    )
+  );
   if (!recipientIds.length) return json({ ok: true, sent: 0 });
 
   const { data: tokenRows, error: tokenError } = await serviceClient

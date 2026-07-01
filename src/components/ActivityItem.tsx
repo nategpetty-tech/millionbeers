@@ -225,21 +225,21 @@ export function ActivityItem({ item, currentUserId, onReact, onAddComment, onDel
           {onAddComment && onDeleteComment ? <CommentButton count={item.comments.length} onPress={() => setCommentsOpen(true)} theme={theme} compact /> : null}
           <View
             style={{
-              height: 28,
-              minWidth: 42,
+              height: 36,
+              minWidth: 52,
               flexDirection: "row",
               alignItems: "center",
               justifyContent: "center",
-              gap: 4,
+              gap: 5,
               borderRadius: theme.radius.pill,
               backgroundColor: theme.colors.card
             }}
           >
-            <Pressable onPress={() => onReact?.(item.id)} hitSlop={8} style={{ height: 28, justifyContent: "center", paddingLeft: 8 }}>
-              <Ionicons name={reacted ? "heart" : "heart-outline"} color={reacted ? theme.colors.error : theme.colors.textPrimary} size={14} />
+            <Pressable onPress={() => onReact?.(item.id)} hitSlop={12} style={{ height: 36, justifyContent: "center", paddingLeft: 11 }}>
+              <Ionicons name={reacted ? "heart" : "heart-outline"} color={reacted ? theme.colors.error : theme.colors.textPrimary} size={18} />
             </Pressable>
-            <Pressable onPress={() => setLikersOpen(true)} hitSlop={8} style={{ height: 28, justifyContent: "center", paddingRight: 8, minWidth: 18 }}>
-              <Text style={{ color: reacted ? theme.colors.error : theme.colors.textPrimary, fontWeight: "900", fontSize: 11 }}>{item.reactions}</Text>
+            <Pressable onPress={() => setLikersOpen(true)} hitSlop={12} style={{ height: 36, justifyContent: "center", paddingRight: 11, minWidth: 22 }}>
+              <Text style={{ color: reacted ? theme.colors.error : theme.colors.textPrimary, fontWeight: "900", fontSize: 13 }}>{item.reactions}</Text>
             </Pressable>
           </View>
         </View>

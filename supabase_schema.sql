@@ -75,6 +75,7 @@ create table if not exists public.group_memberships (
   group_id uuid not null references public.groups(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade,
   role text not null default 'member' check (role in ('founder', 'member')),
+  notifications_enabled boolean not null default true,
   created_at timestamptz not null default now(),
   primary key (group_id, user_id)
 );
@@ -272,6 +273,8 @@ alter table public.venues enable row level security;
 alter table public.push_tokens enable row level security;
 
 grant select, insert, update on public.venues to authenticated;
+grant select, insert on public.group_memberships to authenticated;
+grant update (notifications_enabled) on public.group_memberships to authenticated;
 grant select, insert, update, delete on public.push_tokens to authenticated;
 grant select, insert, delete on public.check_in_comments to authenticated;
 
@@ -562,6 +565,13 @@ with check (
       and g.founder_id = auth.uid()
   )
 );
+
+drop policy if exists "members can update own notification preferences" on public.group_memberships;
+create policy "members can update own notification preferences"
+on public.group_memberships for update
+to authenticated
+using (user_id = (select auth.uid()))
+with check (user_id = (select auth.uid()));
 
 drop policy if exists "requesters and founders can see join requests" on public.group_join_requests;
 create policy "requesters and founders can see join requests"

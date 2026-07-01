@@ -59,6 +59,7 @@ type GroupRow = {
 type MembershipRow = {
   group_id: string;
   user_id: string;
+  notifications_enabled?: boolean | null;
   profiles?: ProfileRow | ProfileRow[] | null;
 };
 
@@ -352,9 +353,7 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
       blockedUserIds
     ] = await Promise.all([
       supabase.from("groups").select("*").order("created_at", { ascending: false }),
-      supabase
-        .from("group_memberships")
-        .select(`group_id,user_id,profiles!group_memberships_user_id_fkey(${profileColumns})`),
+      fetchRemoteMembershipRows(),
       supabase
         .from("group_join_requests")
         .select(
@@ -446,10 +445,28 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
 
 async function fetchOwnRemoteMembershipRows(userId: string) {
   if (!supabase) return { data: [], error: null };
+  const richResult = await supabase
+    .from("group_memberships")
+    .select(`group_id,user_id,notifications_enabled,profiles!group_memberships_user_id_fkey(${profileColumns})`)
+    .eq("user_id", userId);
+  if (!richResult.error) return richResult;
+  console.warn("Falling back while loading own memberships", richResult.error.message);
   return supabase
     .from("group_memberships")
     .select(`group_id,user_id,profiles!group_memberships_user_id_fkey(${profileColumns})`)
     .eq("user_id", userId);
+}
+
+async function fetchRemoteMembershipRows() {
+  if (!supabase) return { data: [], error: null };
+  const richResult = await supabase
+    .from("group_memberships")
+    .select(`group_id,user_id,notifications_enabled,profiles!group_memberships_user_id_fkey(${profileColumns})`);
+  if (!richResult.error) return richResult;
+  console.warn("Falling back while loading memberships", richResult.error.message);
+  return supabase
+    .from("group_memberships")
+    .select(`group_id,user_id,profiles!group_memberships_user_id_fkey(${profileColumns})`);
 }
 
 async function fetchOwnRemoteGroupRows(groupIds: string[]) {
@@ -612,6 +629,15 @@ export async function updateRemoteGroupBackdrop(groupId: string, input: UpdateGr
       backdrop_blurhash: input.backdropBlurhash ?? null
     })
     .eq("id", groupId);
+  if (error) throw error;
+}
+
+export async function updateRemoteGroupNotifications(groupId: string, enabled: boolean) {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from("group_memberships")
+    .update({ notifications_enabled: enabled })
+    .eq("group_id", groupId);
   if (error) throw error;
 }
 
@@ -1008,6 +1034,7 @@ async function mapGroupRow(
 ): Promise<Group> {
   const cloudflareBackdropUrl = buildCloudflareImageUrl(row.backdrop_cloudflare_image_id ?? undefined, "feed");
   const signedBackdropUrl = !cloudflareBackdropUrl && row.backdrop_storage_path ? await createSignedGroupBackdropUrl(row.backdrop_storage_path).catch(() => undefined) : undefined;
+  const currentMembership = memberships.find((membership) => membership.group_id === row.id && membership.user_id === currentUserId);
   const members: GroupMember[] = await Promise.all(
     memberships
       .filter((membership) => membership.group_id === row.id)
@@ -1047,6 +1074,7 @@ async function mapGroupRow(
     createdAt: row.created_at,
     founderId: row.founder_id,
     inviteCode: row.invite_code,
+    notificationsEnabled: currentMembership?.notifications_enabled ?? true,
     members,
     pendingRequests: await Promise.all(requests.filter((request) => request.group_id === row.id).map(mapJoinRequestRow))
   };

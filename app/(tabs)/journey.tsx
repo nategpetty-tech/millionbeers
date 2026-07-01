@@ -65,7 +65,7 @@ export default function JourneyScreen() {
   const [checkInOpen, setCheckInOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<FeedFilter>("all");
-  const [activityExpanded, setActivityExpanded] = useState(false);
+  const [visibleActivityCount, setVisibleActivityCount] = useState(3);
   const { user, groups, globalCount, checkIns, blockedUserIds, initializeSeedData, reactToCheckIn, addCheckInComment, deleteCheckInComment, reportUser } = usePassport();
   const visibleCheckIns = useMemo(() => checkIns.filter((checkIn) => checkIn.userId === user.id || !blockedUserIds.includes(checkIn.userId)), [blockedUserIds, checkIns, user.id]);
   const memberGroups = useMemo(() => groups.filter((group) => group.members.some((member) => member.userId === user.id)), [groups, user.id]);
@@ -78,8 +78,8 @@ export default function JourneyScreen() {
     if (filter === "milestones") return feedItems.filter((item) => item.type === "milestone");
     return feedItems;
   }, [feedItems, filter]);
-  const visibleFeed = activityExpanded ? filteredFeed : filteredFeed.slice(0, 3);
-  const hasMoreActivity = filteredFeed.length > 3;
+  const visibleFeed = filteredFeed.slice(0, visibleActivityCount);
+  const hasMoreActivity = visibleActivityCount < filteredFeed.length;
 
   useEffect(() => {
     void initializeSeedData();
@@ -90,7 +90,7 @@ export default function JourneyScreen() {
   }, [initializeSeedData]);
 
   useEffect(() => {
-    setActivityExpanded(false);
+    setVisibleActivityCount(3);
   }, [filter]);
 
   async function refreshNow() {
@@ -169,11 +169,9 @@ export default function JourneyScreen() {
                   />
                 ))}
                 {hasMoreActivity ? (
-                  <Pressable onPress={() => setActivityExpanded((expanded) => !expanded)} style={activityToggleStyle(theme)}>
-                    <Text style={{ color: theme.colors.accent, fontWeight: "900" }}>
-                      {activityExpanded ? "Show Recent Activity" : `View All Activity (${filteredFeed.length})`}
-                    </Text>
-                    <Ionicons name={activityExpanded ? "chevron-up" : "chevron-down"} color={theme.colors.accent} size={18} />
+                  <Pressable onPress={() => setVisibleActivityCount((count) => Math.min(count + 3, filteredFeed.length))} style={activityToggleStyle(theme)}>
+                    <Text style={{ color: theme.colors.accent, fontWeight: "900" }}>View more</Text>
+                    <Ionicons name="chevron-down" color={theme.colors.accent} size={18} />
                   </Pressable>
                 ) : null}
               </View>
@@ -830,18 +828,18 @@ function FeedMeta({
       <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: theme.colors.textMuted }} />
       <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
         {onReact ? (
-          <View style={{ height: 28, minWidth: 42, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, borderRadius: theme.radius.pill, backgroundColor: theme.colors.card, paddingHorizontal: 8 }}>
-            <Pressable onPress={onReact} hitSlop={8}>
-              <Ionicons name={reacted ? "heart" : "heart-outline"} color={likeColor} size={14} />
+          <View style={{ height: 36, minWidth: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: theme.radius.pill, backgroundColor: theme.colors.card, paddingHorizontal: 11 }}>
+            <Pressable onPress={onReact} hitSlop={12}>
+              <Ionicons name={reacted ? "heart" : "heart-outline"} color={likeColor} size={18} />
             </Pressable>
-            <Pressable onPress={onLikesPress} hitSlop={8}>
-              <Text style={{ color: likeColor, fontWeight: "900", fontSize: 11 }}>{likes}</Text>
+            <Pressable onPress={onLikesPress} hitSlop={12}>
+              <Text style={{ color: likeColor, fontWeight: "900", fontSize: 13 }}>{likes}</Text>
             </Pressable>
           </View>
         ) : (
-          <Pressable onPress={onLikesPress} disabled={!onLikesPress} style={{ height: 28, minWidth: 42, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, borderRadius: theme.radius.pill, backgroundColor: theme.colors.card, paddingHorizontal: 8 }}>
-            <Ionicons name="heart-outline" color={likeColor} size={14} />
-            <Text style={{ color: likeColor, fontWeight: "900", fontSize: 11 }}>{likes}</Text>
+          <Pressable onPress={onLikesPress} disabled={!onLikesPress} hitSlop={12} style={{ height: 36, minWidth: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: theme.radius.pill, backgroundColor: theme.colors.card, paddingHorizontal: 11 }}>
+            <Ionicons name="heart-outline" color={likeColor} size={18} />
+            <Text style={{ color: likeColor, fontWeight: "900", fontSize: 13 }}>{likes}</Text>
           </Pressable>
         )}
         {onCommentsPress ? <CommentButton count={comments} onPress={onCommentsPress} theme={theme} compact /> : null}

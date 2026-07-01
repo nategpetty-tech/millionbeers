@@ -40,25 +40,25 @@ const reportReasons: Array<{ value: ModerationReportReason; label: string }> = [
 ];
 
 export function CommentButton({ count, onPress, theme, compact }: CommentButtonProps) {
-  const height = compact ? 28 : 32;
+  const height = compact ? 36 : 40;
   return (
     <Pressable
       onPress={onPress}
-      hitSlop={8}
+      hitSlop={12}
       style={{
         height,
-        minWidth: compact ? 42 : 50,
+        minWidth: compact ? 52 : 58,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        gap: 4,
+        gap: 5,
         borderRadius: theme.radius.pill,
         backgroundColor: theme.colors.card,
-        paddingHorizontal: compact ? 8 : 10
+        paddingHorizontal: compact ? 11 : 13
       }}
     >
-      <Ionicons name="chatbubble-outline" color={theme.colors.textPrimary} size={compact ? 14 : 15} />
-      <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: compact ? 11 : 12 }}>{count}</Text>
+      <Ionicons name="chatbubble-outline" color={theme.colors.textPrimary} size={compact ? 18 : 19} />
+      <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: compact ? 13 : 14 }}>{count}</Text>
     </Pressable>
   );
 }

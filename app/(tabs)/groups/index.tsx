@@ -472,12 +472,12 @@ function CrewActivityRow({
         ) : null}
       </View>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-start", gap: 5, marginTop: 10 }}>
-        <View style={{ height: 28, minWidth: 42, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, backgroundColor: theme.colors.card, borderRadius: theme.radius.pill }}>
-          <Pressable onPress={() => onReact(activity.id)} hitSlop={8} style={{ height: 28, justifyContent: "center", paddingLeft: 8 }}>
-            <Ionicons name={reacted ? "heart" : "heart-outline"} color={reacted ? theme.colors.error : theme.colors.textPrimary} size={14} />
+        <View style={{ height: 36, minWidth: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, backgroundColor: theme.colors.card, borderRadius: theme.radius.pill }}>
+          <Pressable onPress={() => onReact(activity.id)} hitSlop={12} style={{ height: 36, justifyContent: "center", paddingLeft: 11 }}>
+            <Ionicons name={reacted ? "heart" : "heart-outline"} color={reacted ? theme.colors.error : theme.colors.textPrimary} size={18} />
           </Pressable>
-          <Pressable onPress={() => setLikersOpen(true)} hitSlop={8} style={{ height: 28, justifyContent: "center", paddingRight: 8, minWidth: 18 }}>
-            <Text style={{ color: reacted ? theme.colors.error : theme.colors.textPrimary, fontWeight: "900", fontSize: 11 }}>{activity.reactions}</Text>
+          <Pressable onPress={() => setLikersOpen(true)} hitSlop={12} style={{ height: 36, justifyContent: "center", paddingRight: 11, minWidth: 22 }}>
+            <Text style={{ color: reacted ? theme.colors.error : theme.colors.textPrimary, fontWeight: "900", fontSize: 13 }}>{activity.reactions}</Text>
           </Pressable>
         </View>
         <CommentButton count={activity.comments.length} onPress={() => setCommentsOpen(true)} theme={theme} compact />
