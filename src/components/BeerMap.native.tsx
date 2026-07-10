@@ -1,29 +1,50 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as Location from "expo-location";
+import { useEffect, useMemo, useRef, useState } from "react";
 import MapView, { Marker, Region } from "react-native-maps";
 import { Text, View } from "react-native";
 import { useAppTheme } from "@/theme";
-import type { BeerMapPin } from "./BeerMap.types";
+import type { BeerMapPin, BeerMapProps } from "./BeerMap.types";
 
-type Props = {
-  pins: BeerMapPin[];
-  selectedId?: string;
-  onSelect: (id: string) => void;
-};
+const mapRadiusMiles = 2.5;
 
-export function BeerMap({ pins, selectedId, onSelect }: Props) {
+export function BeerMap({ pins, selectedId, onSelect, focusKey = 0 }: BeerMapProps) {
   const appTheme = useAppTheme();
-  const gpsPins = pins.filter((pin) => typeof pin.latitude === "number" && typeof pin.longitude === "number");
+  const mapRef = useRef<MapView | null>(null);
+  const gpsPins = useMemo(() => pins.filter((pin) => typeof pin.latitude === "number" && typeof pin.longitude === "number"), [pins]);
+  const fallbackRegion = useMemo(() => getInitialRegion(gpsPins), [gpsPins]);
+  const [region, setRegion] = useState<Region | null>(fallbackRegion);
+
+  useEffect(() => {
+    setRegion(fallbackRegion);
+  }, [fallbackRegion]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function centerOnCurrentLocation() {
+      const currentRegion = await getCurrentLocationRegion();
+      if (cancelled || !currentRegion) return;
+      setRegion(currentRegion);
+      mapRef.current?.animateToRegion(currentRegion, 450);
+    }
+
+    void centerOnCurrentLocation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [focusKey]);
 
   if (!gpsPins.length) {
     return <NoGpsMap />;
   }
 
-  const region = getRegion(gpsPins);
-
   return (
     <MapView
+      ref={mapRef}
       style={{ height: 360, borderRadius: 28, overflow: "hidden" }}
-      initialRegion={region}
+      initialRegion={region ?? fallbackRegion ?? undefined}
       showsUserLocation
       showsCompass
       showsScale
@@ -79,7 +100,44 @@ const darkMapStyle = [
   { featureType: "poi", elementType: "geometry", stylers: [{ color: "#161D27" }] }
 ];
 
-function getRegion(pins: BeerMapPin[]): Region {
+async function getCurrentLocationRegion(): Promise<Region | null> {
+  try {
+    const permission = await Location.requestForegroundPermissionsAsync();
+    if (!permission.granted) return null;
+
+    const position = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced
+    });
+
+    return getRadiusRegion(position.coords.latitude, position.coords.longitude);
+  } catch {
+    return null;
+  }
+}
+
+function getInitialRegion(pins: BeerMapPin[]): Region | null {
+  const [mostRecentPin] = pins;
+  if (mostRecentPin && typeof mostRecentPin.latitude === "number" && typeof mostRecentPin.longitude === "number") {
+    return getRadiusRegion(mostRecentPin.latitude, mostRecentPin.longitude);
+  }
+
+  return getFitRegion(pins);
+}
+
+function getRadiusRegion(latitude: number, longitude: number): Region {
+  const latitudeDelta = Math.max(0.06, (mapRadiusMiles * 2) / 69);
+  const longitudeMilesPerDegree = Math.max(1, 69 * Math.cos((latitude * Math.PI) / 180));
+  const longitudeDelta = Math.max(0.06, (mapRadiusMiles * 2) / longitudeMilesPerDegree);
+  return {
+    latitude,
+    longitude,
+    latitudeDelta,
+    longitudeDelta
+  };
+}
+
+function getFitRegion(pins: BeerMapPin[]): Region | null {
+  if (!pins.length) return null;
   const latitudes = pins.map((pin) => pin.latitude as number);
   const longitudes = pins.map((pin) => pin.longitude as number);
   const minLat = Math.min(...latitudes);

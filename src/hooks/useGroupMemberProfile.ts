@@ -4,6 +4,7 @@ import { isRemoteDataConfigured } from "@/services/pintlyData";
 import { buildCloudflareImageUrl } from "@/services/photoStorage";
 import { usePassport } from "@/store/passportStore";
 import { BeerCheckIn, GroupMemberProfile } from "@/types";
+import { checkInPhotoUrl } from "@/utils/photoUrls";
 
 type GroupMemberProfileState = {
   data: GroupMemberProfile | null;
@@ -129,7 +130,7 @@ function buildLocalGroupMemberProfile({
       id: userId,
       displayName: member.name || "Pintly User",
       avatar: member.avatar || initialsFor(member.name),
-      avatarUrl: buildCloudflareImageUrl(member.avatarCloudflareImageId, "avatar") ?? member.avatarUrl,
+      avatarUrl: buildCloudflareImageUrl(member.avatarCloudflareImageId, "feed") ?? member.avatarUrl,
       avatarCloudflareImageId: member.avatarCloudflareImageId
     },
     group: {
@@ -137,7 +138,7 @@ function buildLocalGroupMemberProfile({
       name: group.name
     },
     level: {
-      label: `Level ${levelNumber} Pintly Collector`,
+      label: `Level ${levelNumber} Pintly Drinker`,
       currentXp: points % nextLevelXp,
       nextLevelXp,
       points,
@@ -159,7 +160,7 @@ function buildLocalGroupMemberProfile({
         type: "beer_log",
         title: "Logged a beer",
         subtitle: checkIn.beerName,
-        imageUrl: buildCloudflareImageUrl(checkIn.photoCloudflareImageId, "thumbnail") ?? checkIn.photoThumbnailUrl ?? checkIn.photoUrl ?? checkIn.photoUri,
+        imageUrl: checkInPhotoUrl(checkIn, "thumbnail"),
         createdAt: checkIn.createdAt
       }))
   };

@@ -4,6 +4,7 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text not null default 'Pintly User',
   username text,
+  favorite_beer text,
   avatar text not null default 'HU',
   avatar_url text,
   avatar_storage_path text,
@@ -14,6 +15,7 @@ create table if not exists public.profiles (
 alter table public.profiles add column if not exists avatar_url text;
 alter table public.profiles add column if not exists avatar_storage_path text;
 alter table public.profiles add column if not exists username text;
+alter table public.profiles add column if not exists favorite_beer text;
 alter table public.profiles alter column display_name set default 'Pintly User';
 
 do $$
@@ -276,6 +278,7 @@ grant select, insert, update on public.venues to authenticated;
 grant select, insert on public.group_memberships to authenticated;
 grant update (notifications_enabled) on public.group_memberships to authenticated;
 grant select, insert, update, delete on public.push_tokens to authenticated;
+grant select, insert, delete on public.check_in_reactions to authenticated;
 grant select, insert, delete on public.check_in_comments to authenticated;
 
 create index if not exists check_in_comments_check_in_id_created_at_idx
@@ -300,6 +303,7 @@ returns boolean
 language sql
 security definer
 set search_path = public
+set row_security = off
 as $$
   select exists (
     select 1
@@ -316,6 +320,7 @@ returns boolean
 language sql
 security definer
 set search_path = public
+set row_security = off
 as $$
   select exists (
     select 1
@@ -332,6 +337,7 @@ returns boolean
 language sql
 security definer
 set search_path = public
+set row_security = off
 as $$
   select exists (
     select 1
@@ -346,6 +352,12 @@ as $$
           where cig.check_in_id = c.id
             and gm.user_id = auth.uid()
         )
+        or exists (
+          select 1
+          from public.friendships f
+          where f.user_id = auth.uid()
+            and f.friend_id = c.user_id
+        )
       )
   );
 $$;
@@ -355,18 +367,23 @@ grant execute on function public.can_view_check_in(uuid) to authenticated;
 create or replace function public.auto_link_check_in_to_member_groups()
 returns trigger
 language plpgsql
+security definer
 set search_path = public
+set row_security = off
 as $$
 begin
   insert into public.check_in_groups (check_in_id, group_id)
   select new.id, gm.group_id
   from public.group_memberships gm
   where gm.user_id = new.user_id
+    and new.created_at >= gm.created_at - interval '5 minutes'
   on conflict (check_in_id, group_id) do nothing;
 
   return new;
 end;
 $$;
+
+revoke all on function public.auto_link_check_in_to_member_groups() from public;
 
 drop trigger if exists auto_link_check_in_to_member_groups_on_insert on public.check_ins;
 create trigger auto_link_check_in_to_member_groups_on_insert
@@ -621,16 +638,7 @@ drop policy if exists "members can see group check-ins" on public.check_ins;
 create policy "members can see group check-ins"
 on public.check_ins for select
 to authenticated
-using (
-  user_id = auth.uid()
-  or exists (
-    select 1
-    from public.check_in_groups cig
-    join public.group_memberships gm on gm.group_id = cig.group_id
-    where cig.check_in_id = check_ins.id
-      and gm.user_id = auth.uid()
-  )
-);
+using (public.can_view_check_in(id));
 
 drop policy if exists "users can create own check-ins" on public.check_ins;
 create policy "users can create own check-ins"
@@ -655,7 +663,7 @@ drop policy if exists "members can see check-in group links" on public.check_in_
 create policy "members can see check-in group links"
 on public.check_in_groups for select
 to authenticated
-using (public.is_group_member(check_in_groups.group_id));
+using (public.can_view_check_in(check_in_id));
 
 drop policy if exists "members can attach check-ins to their groups" on public.check_in_groups;
 create policy "members can attach check-ins to their groups"

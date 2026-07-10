@@ -222,6 +222,7 @@ export type BeerCheckIn = {
   photoImageHeight?: number;
   photoBlurhash?: string;
   photoSyncStatus?: "local" | "queued" | "syncing" | "synced" | "failed";
+  photoSyncError?: string;
   remoteSyncStatus?: "queued" | "syncing" | "synced" | "failed";
   remoteSyncError?: string;
   scannedBeerCount?: number;
@@ -245,6 +246,7 @@ export type User = {
   id: string;
   name: string;
   username?: string;
+  favoriteBeer?: string;
   avatar: string;
   avatarUrl?: string;
   avatarStoragePath?: string;
@@ -340,6 +342,7 @@ export type CheckInInput = {
   photoImageHeight?: number;
   photoBlurhash?: string;
   photoSyncStatus?: BeerCheckIn["photoSyncStatus"];
+  photoSyncError?: string;
   remoteSyncStatus?: BeerCheckIn["remoteSyncStatus"];
   scannedBeerCount?: number;
   scanConfidence?: number;
@@ -377,6 +380,7 @@ export type UpdateCheckInPhotoInput = {
   photoImageHeight?: number;
   photoBlurhash?: string;
   photoSyncStatus?: BeerCheckIn["photoSyncStatus"];
+  photoSyncError?: string;
 };
 
 export type BeerScanBox = {
@@ -412,6 +416,7 @@ export type UpdateGroupBackdropInput = {
 
 export type UpdateProfileInput = {
   name: string;
+  favoriteBeer?: string;
   avatarUrl?: string;
   avatarStoragePath?: string;
   avatarCloudflareImageId?: string;

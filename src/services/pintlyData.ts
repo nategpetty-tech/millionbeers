@@ -28,6 +28,7 @@ type ProfileRow = {
   id: string;
   display_name: string;
   username: string | null;
+  favorite_beer: string | null;
   avatar: string;
   avatar_url: string | null;
   avatar_storage_path: string | null;
@@ -59,6 +60,7 @@ type GroupRow = {
 type MembershipRow = {
   group_id: string;
   user_id: string;
+  created_at: string;
   notifications_enabled?: boolean | null;
   profiles?: ProfileRow | ProfileRow[] | null;
 };
@@ -194,6 +196,10 @@ export type RemoteSnapshot = {
 };
 
 const profileColumns = "id,display_name,username,avatar,avatar_url,avatar_storage_path,avatar_cloudflare_image_id,avatar_image_width,avatar_image_height,avatar_blurhash";
+const currentUserProfileColumns = `${profileColumns},favorite_beer`;
+const richCheckInSelect = `*,profiles!check_ins_user_id_fkey(${profileColumns}),check_in_reactions(user_id,profiles!check_in_reactions_user_id_fkey(${profileColumns})),check_in_comments(id,check_in_id,user_id,body,created_at,profiles!check_in_comments_user_id_fkey(${profileColumns}))`;
+const fallbackCheckInSelect = `*,profiles!check_ins_user_id_fkey(${profileColumns}),check_in_reactions(user_id)`;
+const queryPageSize = 1000;
 
 export function isRemoteDataConfigured() {
   return Boolean(supabase);
@@ -294,7 +300,7 @@ export async function fetchRemoteGroupMemberProfile(groupId: string, userId: str
       displayName,
       username: row.user?.username ?? undefined,
       avatar: row.user?.avatar ?? initialsFor(displayName),
-      avatarUrl: buildCloudflareImageUrl(avatarCloudflareImageId, "avatar") ?? row.user?.avatarUrl ?? row.user?.avatar_url ?? undefined,
+      avatarUrl: buildCloudflareImageUrl(avatarCloudflareImageId, "feed") ?? row.user?.avatarUrl ?? row.user?.avatar_url ?? undefined,
       avatarCloudflareImageId,
       createdAt: row.user?.createdAt ?? row.user?.created_at ?? undefined
     },
@@ -303,7 +309,7 @@ export async function fetchRemoteGroupMemberProfile(groupId: string, userId: str
       name: row.group?.name ?? "this group"
     },
     level: {
-      label: row.level?.label ?? "Level 1 Pintly Collector",
+      label: row.level?.label?.replace("Collector", "Drinker") ?? "Level 1 Pintly Drinker",
       currentXp: Number(row.level?.currentXp ?? row.level?.current_xp ?? 0),
       nextLevelXp: Number(row.level?.nextLevelXp ?? row.level?.next_level_xp ?? 500),
       points: Number(row.level?.points ?? 0),
@@ -326,6 +332,7 @@ export async function upsertProfile(user: User) {
   await supabase.from("profiles").upsert({
     id: user.id,
     display_name: user.name || "Pintly User",
+    favorite_beer: user.favoriteBeer?.trim() || null,
     avatar: user.avatar,
     avatar_url: user.avatarUrl ?? null,
     avatar_storage_path: user.avatarStoragePath ?? null,
@@ -383,38 +390,43 @@ export async function fetchRemoteSnapshot(currentUser: User): Promise<RemoteSnap
     if (friendRequestError) console.warn("Could not load remote friend requests", friendRequestError.message);
 
     const ownMembershipResult = await fetchOwnRemoteMembershipRows(currentUser.id);
+    const ownMembershipRows = ownMembershipResult.error ? [] : ((ownMembershipResult.data ?? []) as MembershipRow[]);
     const typedMemberships = mergeMembershipRows(
       membershipError ? [] : ((membershipRows ?? []) as MembershipRow[]),
-      ownMembershipResult.error ? [] : ((ownMembershipResult.data ?? []) as MembershipRow[])
+      ownMembershipRows
     );
     const typedRequests = requestError ? [] : ((requestRows ?? []) as JoinRequestRow[]);
     const typedFriends = friendError ? [] : ((friendRows ?? []) as FriendRow[]);
     const typedFriendRequests = friendRequestError ? [] : ((friendRequestRows ?? []) as FriendRequestRow[]);
     const accessibleGroupIds = new Set(typedMemberships.map((row) => row.group_id));
-    let { data: checkInRows, error: checkInError } = await fetchRemoteCheckInRows();
-    const ownCheckInResult = await fetchOwnRemoteCheckInRows(currentUser.id);
-
-    if (checkInError) {
-      console.warn("Could not load remote check-ins", checkInError.message);
-      checkInRows = ownCheckInResult.data;
-      checkInError = ownCheckInResult.error;
-    }
-
-    if (checkInError || ownCheckInResult.error) {
-      console.warn("Could not load own remote check-ins", (checkInError ?? ownCheckInResult.error)?.message);
-    }
-
     const checkInGroupResult = await fetchRemoteCheckInGroupRows([...accessibleGroupIds]);
     if (checkInGroupResult.error) console.warn("Could not load shared group links", checkInGroupResult.error.message);
-    const mergedCheckInRows = mergeCheckInRows((checkInRows ?? []) as CheckInRow[], (ownCheckInResult.data ?? []) as CheckInRow[]);
+    const checkInGroupRows = (checkInGroupResult.data ?? []) as CheckInGroupRow[];
+    const linkedGroupIdsByCheckInId = groupIdsByCheckInId(checkInGroupRows);
+    const sharedCheckInIds = uniqueIds(checkInGroupRows.map((row) => row.check_in_id));
+    const sharedCheckInResult = await fetchRemoteCheckInRowsByIds(sharedCheckInIds);
+    const ownCheckInResult = await fetchOwnRemoteCheckInRows(currentUser.id);
+    let ownCheckInRows = (ownCheckInResult.data ?? []) as CheckInRow[];
+    if (!ownCheckInResult.error && accessibleGroupIds.size > 0) {
+      ownCheckInRows = await repairOwnRecentCheckInGroupLinks(ownCheckInRows, ownMembershipRows, linkedGroupIdsByCheckInId);
+    }
+
+    if (sharedCheckInResult.error) {
+      console.warn("Could not load shared remote check-ins", sharedCheckInResult.error.message);
+    }
+    if (ownCheckInResult.error) {
+      console.warn("Could not load own remote check-ins", ownCheckInResult.error.message);
+    }
+
+    const mergedCheckInRows = mergeCheckInRows(sharedCheckInResult.error ? [] : ((sharedCheckInResult.data ?? []) as CheckInRow[]), ownCheckInRows);
     const rowsWithSharedGroupLinks = mergeCheckInGroupLinks(
       mergedCheckInRows,
-      checkInGroupResult.error ? [] : ((checkInGroupResult.data ?? []) as CheckInGroupRow[])
+      checkInGroupResult.error ? [] : checkInGroupRows
     );
     const mappedCheckIns = await Promise.all(rowsWithSharedGroupLinks.map(mapCheckInRow));
-    const checkIns = friendsFeatureEnabled
-      ? mappedCheckIns
-      : mappedCheckIns.filter((checkIn) => checkIn.userId === currentUser.id || checkIn.groupIds.some((groupId) => accessibleGroupIds.has(groupId)));
+    const checkIns = mappedCheckIns.filter(
+      (checkIn) => checkIn.userId === currentUser.id || checkIn.groupIds.some((groupId) => accessibleGroupIds.has(groupId))
+    );
     const ownGroupRowsResult = await fetchOwnRemoteGroupRows([...accessibleGroupIds]);
     if (ownGroupRowsResult.error) console.warn("Could not load own remote groups", ownGroupRowsResult.error.message);
     const resolvedGroupRows = mergeGroupRows(
@@ -455,13 +467,13 @@ async function fetchOwnRemoteMembershipRows(userId: string) {
   if (!supabase) return { data: [], error: null };
   const richResult = await supabase
     .from("group_memberships")
-    .select(`group_id,user_id,notifications_enabled,profiles!group_memberships_user_id_fkey(${profileColumns})`)
+    .select(`group_id,user_id,created_at,notifications_enabled,profiles!group_memberships_user_id_fkey(${profileColumns})`)
     .eq("user_id", userId);
   if (!richResult.error) return richResult;
   console.warn("Falling back while loading own memberships", richResult.error.message);
   return supabase
     .from("group_memberships")
-    .select(`group_id,user_id,profiles!group_memberships_user_id_fkey(${profileColumns})`)
+    .select(`group_id,user_id,created_at,profiles!group_memberships_user_id_fkey(${profileColumns})`)
     .eq("user_id", userId);
 }
 
@@ -469,12 +481,12 @@ async function fetchRemoteMembershipRows() {
   if (!supabase) return { data: [], error: null };
   const richResult = await supabase
     .from("group_memberships")
-    .select(`group_id,user_id,notifications_enabled,profiles!group_memberships_user_id_fkey(${profileColumns})`);
+    .select(`group_id,user_id,created_at,notifications_enabled,profiles!group_memberships_user_id_fkey(${profileColumns})`);
   if (!richResult.error) return richResult;
   console.warn("Falling back while loading memberships", richResult.error.message);
   return supabase
     .from("group_memberships")
-    .select(`group_id,user_id,profiles!group_memberships_user_id_fkey(${profileColumns})`);
+    .select(`group_id,user_id,created_at,profiles!group_memberships_user_id_fkey(${profileColumns})`);
 }
 
 async function fetchOwnRemoteGroupRows(groupIds: string[]) {
@@ -484,25 +496,96 @@ async function fetchOwnRemoteGroupRows(groupIds: string[]) {
 
 async function fetchRemoteCheckInGroupRows(groupIds: string[]) {
   if (!supabase || !groupIds.length) return { data: [], error: null };
-  return supabase.from("check_in_groups").select("check_in_id,group_id").in("group_id", groupIds);
+  const rows: CheckInGroupRow[] = [];
+  for (let from = 0; ; from += queryPageSize) {
+    const { data, error } = await supabase
+      .from("check_in_groups")
+      .select("check_in_id,group_id")
+      .in("group_id", groupIds)
+      .order("check_in_id", { ascending: false })
+      .range(from, from + queryPageSize - 1);
+    if (error) return { data: rows, error };
+    rows.push(...((data ?? []) as CheckInGroupRow[]));
+    if (!data || data.length < queryPageSize) break;
+  }
+  return { data: rows, error: null };
 }
 
-async function fetchRemoteCheckInRows() {
-  if (!supabase) return { data: [], error: null };
-  const richResult = await supabase
-    .from("check_ins")
-    .select(
-      `*,profiles!check_ins_user_id_fkey(${profileColumns}),check_in_groups(group_id),check_in_reactions(user_id,profiles!check_in_reactions_user_id_fkey(${profileColumns})),check_in_comments(id,check_in_id,user_id,body,created_at,profiles!check_in_comments_user_id_fkey(${profileColumns}))`
-    )
-    .order("created_at", { ascending: false });
+async function fetchRemoteCheckInRowsByIds(checkInIds: string[]) {
+  if (!supabase || !checkInIds.length) return { data: [], error: null };
+  const rows: CheckInRow[] = [];
+  for (const ids of chunks(checkInIds, 200)) {
+    const richResult = await supabase
+      .from("check_ins")
+      .select(richCheckInSelect)
+      .in("id", ids)
+      .order("created_at", { ascending: false })
+      .range(0, queryPageSize - 1);
 
-  if (!richResult.error) return richResult;
+    if (!richResult.error) {
+      rows.push(...((richResult.data ?? []) as CheckInRow[]));
+      continue;
+    }
 
-  console.warn("Falling back to reaction ids while loading check-ins", richResult.error.message);
-  return supabase
-    .from("check_ins")
-    .select(`*,profiles!check_ins_user_id_fkey(${profileColumns}),check_in_groups(group_id),check_in_reactions(user_id)`)
-    .order("created_at", { ascending: false });
+    console.warn("Falling back to reaction ids while loading check-ins", richResult.error.message);
+    const fallbackResult = await supabase
+      .from("check_ins")
+      .select(fallbackCheckInSelect)
+      .in("id", ids)
+      .order("created_at", { ascending: false })
+      .range(0, queryPageSize - 1);
+    if (fallbackResult.error) return { data: rows, error: fallbackResult.error };
+    rows.push(...((fallbackResult.data ?? []) as CheckInRow[]));
+  }
+  return { data: mergeCheckInRows(rows, []), error: null };
+}
+
+async function repairOwnRecentCheckInGroupLinks(
+  rows: CheckInRow[],
+  memberships: MembershipRow[],
+  linkedGroupIdsByCheckInId: Map<string, Set<string>>
+) {
+  if (!supabase || !rows.length || !memberships.length) return rows;
+  const recentCutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const links = rows.flatMap((row) => {
+    const checkInTime = new Date(row.created_at).getTime();
+    if (checkInTime < recentCutoff) return [];
+    const linkedGroupIds = linkedGroupIdsByCheckInId.get(row.id) ?? new Set<string>();
+    return memberships
+      .filter(
+        (membership) =>
+          !linkedGroupIds.has(membership.group_id) &&
+          checkInTime >= new Date(membership.created_at).getTime() - 5 * 60 * 1000
+      )
+      .map((membership) => ({ check_in_id: row.id, group_id: membership.group_id }));
+  });
+  if (!links.length) return rows;
+
+  const { error } = await supabase.from("check_in_groups").upsert(links, { onConflict: "check_in_id,group_id" });
+  if (error) {
+    console.warn("Could not repair recent check-in group links", error.message);
+    return rows;
+  }
+
+  const repairedLinksByCheckInId = new Map<string, CheckInGroupRow[]>();
+  links.forEach((link) => {
+    repairedLinksByCheckInId.set(link.check_in_id, [...(repairedLinksByCheckInId.get(link.check_in_id) ?? []), { group_id: link.group_id }]);
+  });
+  return rows.map((row) => {
+    const repairedLinks = repairedLinksByCheckInId.get(row.id);
+    return repairedLinks ? { ...row, check_in_groups: repairedLinks } : row;
+  });
+}
+
+function groupIdsByCheckInId(rows: CheckInGroupRow[]) {
+  const result = new Map<string, Set<string>>();
+  rows.forEach((row) => {
+    if (!row.check_in_id) return;
+    const groupIds = result.get(row.check_in_id) ?? new Set<string>();
+    groupIds.add(row.group_id);
+    result.set(row.check_in_id, groupIds);
+  });
+  return result;
 }
 
 function mergeMembershipRows(primary: MembershipRow[], fallback: MembershipRow[]) {
@@ -537,6 +620,18 @@ function mergeCheckInRows(primary: CheckInRow[], fallback: CheckInRow[]) {
   return [...rowsById.values()].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 }
 
+function uniqueIds(ids: Array<string | undefined>) {
+  return Array.from(new Set(ids.filter((id): id is string => Boolean(id))));
+}
+
+function chunks<T>(items: T[], size: number) {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    result.push(items.slice(index, index + size));
+  }
+  return result;
+}
+
 function mergeCheckInGroupLinks(rows: CheckInRow[], groupLinks: CheckInGroupRow[]) {
   if (!groupLinks.length) return rows;
   const linksByCheckInId = new Map<string, CheckInGroupRow[]>();
@@ -560,14 +655,14 @@ async function fetchOwnRemoteCheckInRows(userId: string) {
   const richResult = await supabase
     .from("check_ins")
     .select(
-      `*,profiles!check_ins_user_id_fkey(${profileColumns}),check_in_groups(group_id),check_in_reactions(user_id,profiles!check_in_reactions_user_id_fkey(${profileColumns})),check_in_comments(id,check_in_id,user_id,body,created_at,profiles!check_in_comments_user_id_fkey(${profileColumns}))`
+      `*,profiles!check_ins_user_id_fkey(${profileColumns}),check_in_reactions(user_id,profiles!check_in_reactions_user_id_fkey(${profileColumns})),check_in_comments(id,check_in_id,user_id,body,created_at,profiles!check_in_comments_user_id_fkey(${profileColumns}))`
     )
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
   if (!richResult.error) return richResult;
   return supabase
     .from("check_ins")
-    .select(`*,profiles!check_ins_user_id_fkey(${profileColumns}),check_in_groups(group_id),check_in_reactions(user_id)`)
+    .select(`*,profiles!check_ins_user_id_fkey(${profileColumns}),check_in_reactions(user_id)`)
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 }
@@ -576,7 +671,7 @@ async function fetchRemoteUserProfile(currentUser: User): Promise<User> {
   if (!supabase) return currentUser;
   const { data, error } = await supabase
     .from("profiles")
-    .select(profileColumns)
+    .select(currentUserProfileColumns)
     .eq("id", currentUser.id)
     .maybeSingle();
   if (error || !data) return currentUser;
@@ -587,6 +682,7 @@ async function fetchRemoteUserProfile(currentUser: User): Promise<User> {
     ...currentUser,
     name,
     username: profile.username ?? currentUser.username,
+    favoriteBeer: profile.favorite_beer ?? currentUser.favoriteBeer,
     avatar: profile.avatar || initialsFor(name),
     avatarUrl,
     avatarStoragePath: profile.avatar_storage_path ?? currentUser.avatarStoragePath,
@@ -757,7 +853,7 @@ export async function searchRemoteUsers(query: string): Promise<UserSearchResult
       userId: row.user_id,
       name: row.display_name || "Pintly User",
       avatar: row.avatar || initialsFor(row.display_name || "Pintly User"),
-      avatarUrl: buildCloudflareImageUrl(row.avatar_cloudflare_image_id ?? undefined, "avatar") ?? row.avatar_url ?? undefined,
+      avatarUrl: buildCloudflareImageUrl(row.avatar_cloudflare_image_id ?? undefined, "feed") ?? row.avatar_url ?? undefined,
       avatarCloudflareImageId: row.avatar_cloudflare_image_id ?? undefined,
       relationship: row.relationship
     }))
@@ -831,6 +927,8 @@ export async function createRemoteCheckInFromLocal(localCheckIn: BeerCheckIn, gr
     avatar_url: localCheckIn.userAvatarUrl ?? null
   });
   if (profileError) throw new Error(`Profile sync failed: ${profileError.message}`);
+  const membershipGroupIds = await fetchRemoteMembershipGroupIds(remoteUserId);
+  const effectiveGroupIds = uniqueIds([...groupIds, ...membershipGroupIds]);
   let venueId: string | null = localCheckIn.venueId ?? null;
   const venueSelectionStatus = localCheckIn.venueSelectionStatus ?? (localCheckIn.venueConfirmationStatus === "confirmed" ? "confirmed" : localCheckIn.venueConfirmationStatus ?? "skipped");
   const venueConfirmed = localCheckIn.venueConfirmed ?? (venueSelectionStatus === "confirmed" || venueSelectionStatus === "changed");
@@ -908,25 +1006,74 @@ export async function createRemoteCheckInFromLocal(localCheckIn: BeerCheckIn, gr
     if (updateError) throw new Error(`Stamp repair failed: ${updateError.message}`);
   }
 
-  if (groupIds.length) {
+  if (localCheckIn.photoCloudflareImageId) {
+    await upsertCheckInImageMetadata(localCheckIn.id, {
+      photoUrl: localCheckIn.photoUrl,
+      photoStoragePath: localCheckIn.photoStoragePath,
+      photoThumbnailUrl: localCheckIn.photoThumbnailUrl,
+      photoThumbnailStoragePath: localCheckIn.photoThumbnailStoragePath,
+      photoCloudflareImageId: localCheckIn.photoCloudflareImageId,
+      photoImageWidth: localCheckIn.photoImageWidth,
+      photoImageHeight: localCheckIn.photoImageHeight,
+      photoBlurhash: localCheckIn.photoBlurhash
+    });
+  }
+
+  if (effectiveGroupIds.length) {
     const { error: groupLinkError } = await supabase
       .from("check_in_groups")
-      .upsert(groupIds.map((groupId) => ({ check_in_id: localCheckIn.id, group_id: groupId })), { onConflict: "check_in_id,group_id" });
+      .upsert(effectiveGroupIds.map((groupId) => ({ check_in_id: localCheckIn.id, group_id: groupId })), { onConflict: "check_in_id,group_id" });
     if (groupLinkError) {
-      if (insertedCheckIn) {
-        await supabase.from("check_ins").delete().eq("id", localCheckIn.id);
-      }
       throw new Error(`Group link failed: ${groupLinkError.message}`);
+    }
+    const { data: groupLinkRows, error: groupLinkVerifyError } = await supabase
+      .from("check_in_groups")
+      .select("group_id")
+      .eq("check_in_id", localCheckIn.id)
+      .in("group_id", effectiveGroupIds);
+    if (groupLinkVerifyError) {
+      throw new Error(`Group link verification failed: ${groupLinkVerifyError.message}`);
+    }
+    const linkedGroupIds = new Set(((groupLinkRows ?? []) as Array<{ group_id?: string }>).map((row) => row.group_id).filter(Boolean));
+    const missingGroupIds = effectiveGroupIds.filter((groupId) => !linkedGroupIds.has(groupId));
+    if (missingGroupIds.length) {
+      throw new Error("Group link verification failed: the stamp is not visible in every current group.");
     }
   }
 
-  if (insertedCheckIn && groupIds.length) {
-    void supabase.functions.invoke("send-check-in-notifications", {
-      body: { checkInId: localCheckIn.id }
-    }).catch((notifyError) => {
+  if (insertedCheckIn && effectiveGroupIds.length) {
+    void invokeAuthenticatedFunction("send-check-in-notifications", { checkInId: localCheckIn.id }).catch((notifyError) => {
       console.warn("Could not send check-in notifications", notifyError);
     });
   }
+}
+
+async function invokeAuthenticatedFunction(functionName: string, body: Record<string, unknown>) {
+  if (!supabase) return null;
+  const {
+    data: { session },
+    error: sessionError
+  } = await supabase.auth.getSession();
+  if (sessionError) throw new Error(`Could not load session for ${functionName}: ${sessionError.message}`);
+  if (!session?.access_token) throw new Error(`Cannot call ${functionName} without an active session.`);
+
+  const { data, error } = await supabase.functions.invoke(functionName, {
+    body,
+    headers: {
+      Authorization: `Bearer ${session.access_token}`
+    }
+  });
+  if (error) throw error;
+  return data;
+}
+
+async function fetchRemoteMembershipGroupIds(userId: string) {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from("group_memberships").select("group_id").eq("user_id", userId);
+  if (error) {
+    throw new Error(`Could not load memberships while syncing stamp: ${error.message}`);
+  }
+  return uniqueIds(((data ?? []) as Array<{ group_id?: string }>).map((row) => row.group_id));
 }
 
 export async function updateRemoteCheckIn(checkInId: string, input: UpdateCheckInInput) {
@@ -960,7 +1107,7 @@ export async function updateRemoteCheckInPhoto(checkInId: string, input: UpdateC
   if (!supabase) return;
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("check_ins")
       .update({
         photo_url: input.photoUrl ?? null,
@@ -972,12 +1119,14 @@ export async function updateRemoteCheckInPhoto(checkInId: string, input: UpdateC
         photo_image_height: input.photoImageHeight ?? null,
         photo_blurhash: input.photoBlurhash ?? null
       })
-      .eq("id", checkInId);
-    if (!error) {
+      .eq("id", checkInId)
+      .select("id")
+      .maybeSingle();
+    if (!error && data?.id) {
       await upsertCheckInImageMetadata(checkInId, input);
       return;
     }
-    lastError = error;
+    lastError = error ?? new Error("Check-in row is not ready for photo update.");
     await wait(900 * (attempt + 1));
   }
   throw lastError;
@@ -985,9 +1134,10 @@ export async function updateRemoteCheckInPhoto(checkInId: string, input: UpdateC
 
 async function upsertCheckInImageMetadata(checkInId: string, input: UpdateCheckInPhotoInput) {
   if (!supabase || !input.photoCloudflareImageId) return;
-  const { data } = await supabase.from("check_ins").select("user_id").eq("id", checkInId).maybeSingle();
+  const { data, error: userError } = await supabase.from("check_ins").select("user_id").eq("id", checkInId).maybeSingle();
+  if (userError) throw new Error(`Could not load check-in owner for image metadata: ${userError.message}`);
   if (!data?.user_id) return;
-  await supabase.from("image_uploads").upsert(
+  const { error } = await supabase.from("image_uploads").upsert(
     {
       cloudflare_image_id: input.photoCloudflareImageId,
       image_type: "beer_photo",
@@ -1000,6 +1150,7 @@ async function upsertCheckInImageMetadata(checkInId: string, input: UpdateCheckI
     },
     { onConflict: "cloudflare_image_id" }
   );
+  if (error) throw new Error(`Could not link image metadata to check-in: ${error.message}`);
 }
 
 export async function deleteRemoteCheckIn(checkInId: string) {
@@ -1008,23 +1159,20 @@ export async function deleteRemoteCheckIn(checkInId: string) {
   if (error) throw error;
 }
 
-export async function toggleRemoteReaction(checkInId: string, userId: string, reacted: boolean) {
+export async function toggleRemoteReaction(checkInId: string, reacted: boolean) {
   if (!supabase) return;
-  if (reacted) {
-    const { error } = await supabase.from("check_in_reactions").delete().eq("check_in_id", checkInId).eq("user_id", userId);
-    if (error) throw error;
-    return;
-  }
-  const { error } = await supabase
-    .from("check_in_reactions")
-    .upsert({ check_in_id: checkInId, user_id: userId }, { onConflict: "check_in_id,user_id", ignoreDuplicates: true });
+  const { error } = await supabase.functions.invoke("toggle-check-in-reaction", {
+    body: { checkInId, reacted }
+  });
   if (error) throw error;
 
-  void supabase.functions.invoke("send-like-notification", {
-    body: { checkInId }
-  }).catch((notifyError) => {
-    console.warn("Could not send like notification", notifyError);
-  });
+  if (!reacted) {
+    void supabase.functions.invoke("send-like-notification", {
+      body: { checkInId }
+    }).catch((notifyError) => {
+      console.warn("Could not send like notification", notifyError);
+    });
+  }
 }
 
 export async function createRemoteCheckInComment(comment: BeerComment) {
@@ -1269,7 +1417,7 @@ async function mapFriendRequestRow(row: FriendRequestRow, currentUserId: string)
 
 async function resolveProfileAvatarUrl(profile: ProfileRow | null | undefined) {
   if (!profile) return undefined;
-  const cloudflareAvatarUrl = buildCloudflareImageUrl(profile.avatar_cloudflare_image_id ?? undefined, "avatar");
+  const cloudflareAvatarUrl = buildCloudflareImageUrl(profile.avatar_cloudflare_image_id ?? undefined, "feed");
   if (cloudflareAvatarUrl) return cloudflareAvatarUrl;
   if (!profile.avatar_storage_path) return profile.avatar_url ?? undefined;
   return createSignedProfilePhotoUrl(profile.avatar_storage_path).catch(() => profile.avatar_url ?? undefined);

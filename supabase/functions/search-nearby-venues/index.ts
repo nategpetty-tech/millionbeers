@@ -67,17 +67,25 @@ const corsHeaders = {
 const primaryFoursquareSearches = [
   { label: "nearby", radiusMeters: 600 },
   { label: "bar", query: "bar", radiusMeters: 800 },
+  { label: "restaurant", query: "restaurant", radiusMeters: 900 },
+  { label: "cafe", query: "cafe", radiusMeters: 900 },
+  { label: "bistro", query: "bistro", radiusMeters: 900 },
   { label: "sports_bar", query: "sports bar", radiusMeters: 1000 },
   { label: "brewery", query: "brewery", radiusMeters: 1000 },
   { label: "pub", query: "pub", radiusMeters: 1000 },
   { label: "beer", query: "beer", radiusMeters: 1000 }
 ];
-const restaurantFallbackSearch = { label: "restaurant", query: "restaurant", radiusMeters: 900 };
+const foodFallbackSearches = [
+  { label: "food", query: "food", radiusMeters: 900 },
+  { label: "grill", query: "grill", radiusMeters: 900 }
+];
 const maxSearchRadiusMeters = 1000;
 const blockedVenueNameTerms = ["conference room", "meeting room", "ballroom", "suite", "office"];
-const strongBeerCategoryTerms = ["bar", "brewery", "pub", "taproom", "tavern", "beer garden", "beer hall", "biergarten", "sports bar"];
-const usefulVenueCategoryTerms = ["restaurant", "lounge", "music venue", "event venue", "stadium", "arena"];
+const strongBeerCategoryTerms = ["bar", "brewery", "pub", "taproom", "tavern", "beer garden", "beer hall", "biergarten", "sports bar", "gastropub"];
+const foodVenueCategoryTerms = ["restaurant", "cafe", "bistro", "diner", "grill", "kitchen", "eatery", "pizzeria", "pizza", "taqueria"];
+const usefulVenueCategoryTerms = ["lounge", "music venue", "event venue", "stadium", "arena"];
 const beerSearchLabels = new Set(["bar", "sports_bar", "brewery", "pub", "beer"]);
+const foodSearchLabels = new Set(["restaurant", "cafe", "bistro", "food", "grill"]);
 const manualSearchRadiusMeters = 1200;
 
 Deno.serve(async (request) => {
@@ -248,7 +256,7 @@ async function searchFoursquare({
   longitude: number;
   apiKey: string;
 }) {
-  const [searchResults, restaurantFallback] = await Promise.all([
+  const [searchResults, foodFallbackResults] = await Promise.all([
     Promise.all(
       primaryFoursquareSearches.map((search) =>
         fetchFoursquarePlaces({
@@ -261,17 +269,21 @@ async function searchFoursquare({
         })
       )
     ),
-    fetchFoursquarePlaces({
-      latitude,
-      longitude,
-      radiusMeters: restaurantFallbackSearch.radiusMeters,
-      apiKey,
-      query: restaurantFallbackSearch.query,
-      label: restaurantFallbackSearch.label
-    })
+    Promise.all(
+      foodFallbackSearches.map((search) =>
+        fetchFoursquarePlaces({
+          latitude,
+          longitude,
+          radiusMeters: search.radiusMeters,
+          apiKey,
+          query: search.query,
+          label: search.label
+        })
+      )
+    )
   ]);
   const primaryResults = searchResults.flat();
-  return mergeVenueCandidates(primaryResults, restaurantFallback);
+  return mergeVenueCandidates(primaryResults, foodFallbackResults.flat());
 }
 
 async function fetchFoursquarePlaces({
@@ -378,7 +390,7 @@ function scoreVenue(candidate: RankedVenueCandidate): RankedVenueCandidate {
   const distanceScore = Math.max(0, 1 - distanceMeters / maxSearchRadiusMeters) * 0.55;
   const categoryScore = categoryScoreFor(candidate.category);
   const historyScore = candidate.source === "recent" ? 0.18 : candidate.source === "stored" ? 0.12 : 0;
-  const queryScore = candidate.searchLabel && beerSearchLabels.has(candidate.searchLabel) ? 0.14 : candidate.searchLabel === "restaurant" ? -0.04 : 0;
+  const queryScore = candidate.searchLabel && beerSearchLabels.has(candidate.searchLabel) ? 0.14 : candidate.searchLabel && foodSearchLabels.has(candidate.searchLabel) ? 0.1 : 0;
   const confidence = Math.min(0.98, Number((distanceScore + categoryScore + historyScore + queryScore).toFixed(2)));
   return { ...candidate, confidence };
 }
@@ -386,6 +398,7 @@ function scoreVenue(candidate: RankedVenueCandidate): RankedVenueCandidate {
 function categoryScoreFor(category?: string) {
   const normalized = category?.toLowerCase() ?? "";
   if (strongBeerCategoryTerms.some((term) => normalized.includes(term))) return 0.32;
+  if (foodVenueCategoryTerms.some((term) => normalized.includes(term))) return 0.26;
   if (usefulVenueCategoryTerms.some((term) => normalized.includes(term))) return 0.18;
   return 0.04;
 }

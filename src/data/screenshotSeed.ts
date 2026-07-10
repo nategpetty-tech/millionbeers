@@ -8,6 +8,7 @@ export const screenshotDemoUser: User = {
   id: "demo-user-nate",
   name: "Nate",
   username: "nate_pints",
+  favoriteBeer: "Crisp Pilsner",
   avatar: "NP",
   hasOnboarded: true,
   level: 4,

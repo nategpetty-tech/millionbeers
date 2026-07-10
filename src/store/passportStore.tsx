@@ -27,13 +27,12 @@ import {
   toggleRemoteReaction,
   unblockRemoteUser,
   updateRemoteCheckIn,
-  updateRemoteCheckInPhoto,
   updateRemoteCheckInScan,
   updateRemoteGroupBackdrop,
   updateRemoteGroupNotifications,
   upsertProfile
 } from "@/services/pintlyData";
-import { configurePhotoUploadQueue, enqueuePhotoUpload, startPhotoUploadQueueLifecycle } from "@/services/photoUploadQueue";
+import { cancelPhotoUpload, configurePhotoUploadQueue, enqueuePhotoUpload, startPhotoUploadQueueLifecycle } from "@/services/photoUploadQueue";
 import { buildCloudflareImageUrl, createSignedProfilePhotoUrl, deleteCloudflareImage } from "@/services/photoStorage";
 import {
   Badge,
@@ -58,6 +57,7 @@ import {
   UserSearchResult
 } from "@/types";
 import { makeId, makeUuid } from "@/utils/format";
+import { groupActivity } from "@/utils/activityFeed";
 import { GROUP_MILESTONE_TIERS } from "@/utils/groupMilestones";
 import type { AuthProfile } from "./authStore";
 
@@ -381,6 +381,7 @@ function normalizeStoredState(savedState: PassportState): PassportState {
     photoImageWidth: checkIn.photoImageWidth,
     photoImageHeight: checkIn.photoImageHeight,
     photoBlurhash: checkIn.photoBlurhash,
+    photoSyncError: checkIn.photoSyncError,
     venueConfirmationStatus: checkIn.venueConfirmationStatus ?? "skipped",
     venueSelectionStatus: checkIn.venueSelectionStatus ?? (checkIn.venueConfirmationStatus === "confirmed" ? "confirmed" : checkIn.venueConfirmationStatus ?? "skipped"),
     venueConfirmed: checkIn.venueConfirmed ?? (checkIn.venueConfirmationStatus === "confirmed"),
@@ -410,14 +411,70 @@ function normalizeStoredState(savedState: PassportState): PassportState {
   };
 }
 
-function mergeRemoteCheckIns(localCheckIns: BeerCheckIn[], remoteCheckIns: BeerCheckIn[]) {
+function mergeRemoteCheckIns(localCheckIns: BeerCheckIn[], remoteCheckIns: BeerCheckIn[], currentUserId: string) {
   const remoteIds = new Set(remoteCheckIns.map((checkIn) => checkIn.id));
-  const localOnly = localCheckIns.filter((checkIn) => !remoteIds.has(checkIn.id) && checkIn.remoteSyncStatus !== "synced");
-  return [...localOnly, ...remoteCheckIns].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const localById = new Map(localCheckIns.map((checkIn) => [checkIn.id, checkIn]));
+  const mergedRemoteCheckIns = remoteCheckIns.map((remoteCheckIn) => {
+    const localCheckIn = localById.get(remoteCheckIn.id);
+    if (!localCheckIn || remoteCheckIn.userId !== currentUserId || hasRemotePhoto(remoteCheckIn) || !hasLocalPhoto(localCheckIn)) {
+      return remoteCheckIn;
+    }
+    return {
+      ...remoteCheckIn,
+      photoUri: localCheckIn.photoUri,
+      photoUrl: localCheckIn.photoUrl ?? remoteCheckIn.photoUrl,
+      photoStoragePath: localCheckIn.photoStoragePath ?? remoteCheckIn.photoStoragePath,
+      photoThumbnailUrl: localCheckIn.photoThumbnailUrl ?? remoteCheckIn.photoThumbnailUrl,
+      photoThumbnailStoragePath: localCheckIn.photoThumbnailStoragePath ?? remoteCheckIn.photoThumbnailStoragePath,
+      photoCloudflareImageId: localCheckIn.photoCloudflareImageId ?? remoteCheckIn.photoCloudflareImageId,
+      photoImageWidth: localCheckIn.photoImageWidth ?? remoteCheckIn.photoImageWidth,
+      photoImageHeight: localCheckIn.photoImageHeight ?? remoteCheckIn.photoImageHeight,
+      photoBlurhash: localCheckIn.photoBlurhash ?? remoteCheckIn.photoBlurhash,
+      photoSyncError: localCheckIn.photoSyncError,
+      photoSyncStatus: localCheckIn.photoCloudflareImageId ? "synced" : localCheckIn.photoUri ? "queued" : localCheckIn.photoSyncStatus,
+      remoteSyncStatus: localCheckIn.photoCloudflareImageId ? "queued" : remoteCheckIn.remoteSyncStatus
+    };
+  });
+  const rescueCutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const localOnly = localCheckIns
+    .filter((checkIn) => {
+      if (remoteIds.has(checkIn.id)) return false;
+      if (checkIn.remoteSyncStatus !== "synced") return true;
+      if (checkIn.userId !== currentUserId) return false;
+      return new Date(checkIn.createdAt).getTime() >= rescueCutoff;
+    })
+    .map((checkIn) =>
+      checkIn.userId === currentUserId
+        ? {
+            ...checkIn,
+            remoteSyncStatus: "queued" as const,
+            remoteSyncError: undefined,
+            photoSyncStatus:
+              checkIn.photoUri && !checkIn.photoCloudflareImageId && checkIn.photoSyncStatus !== "synced" && checkIn.photoSyncStatus !== "failed"
+                ? "queued"
+                : checkIn.photoSyncStatus
+          }
+        : checkIn
+    );
+  return [...localOnly, ...mergedRemoteCheckIns].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+function hasRemotePhoto(checkIn: BeerCheckIn) {
+  return Boolean(
+    checkIn.photoCloudflareImageId ||
+      checkIn.photoStoragePath ||
+      checkIn.photoUrl ||
+      checkIn.photoThumbnailStoragePath ||
+      checkIn.photoThumbnailUrl
+  );
+}
+
+function hasLocalPhoto(checkIn: BeerCheckIn) {
+  return Boolean(checkIn.photoUri || hasRemotePhoto(checkIn));
 }
 
 async function refreshUserAvatarUrl(user: User): Promise<User> {
-  const cloudflareAvatarUrl = buildCloudflareImageUrl(user.avatarCloudflareImageId, "avatar");
+  const cloudflareAvatarUrl = buildCloudflareImageUrl(user.avatarCloudflareImageId, "feed");
   if (cloudflareAvatarUrl) return { ...user, avatarUrl: cloudflareAvatarUrl };
   if (!user.avatarStoragePath) return user;
   const avatarUrl = await createSignedProfilePhotoUrl(user.avatarStoragePath).catch(() => undefined);
@@ -496,23 +553,47 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
   );
 
   const initializeSeedData = useCallback(async () => {
-    if (screenshotDemoEnabled) {
-      setState(createSeedState(authenticatedUser));
-      return;
-    }
-    const stored = await loadStoredState(storageKey);
-    const normalized = stored ? normalizeStoredState(bindStoredStateToAuthenticatedUser(stored, authenticatedUser)) : null;
-    if (normalized) {
-      const refreshedUser = await refreshUserAvatarUrl(normalized.user);
-      const refreshed = normalizeStoredState({ ...normalized, user: refreshedUser });
-      const remote = await fetchRemoteSnapshot(refreshed.user);
+    try {
+      if (screenshotDemoEnabled) {
+        setState(createSeedState(authenticatedUser));
+        return;
+      }
+      const stored = await loadStoredState(storageKey);
+      const normalized = stored ? normalizeStoredState(bindStoredStateToAuthenticatedUser(stored, authenticatedUser)) : null;
+      if (normalized) {
+        const refreshedUser = await refreshUserAvatarUrl(normalized.user);
+        const refreshed = normalizeStoredState({ ...normalized, user: refreshedUser });
+        const remote = await fetchRemoteSnapshot(refreshed.user);
+        const fallbackGlobalCount = remote ? null : await fetchRemoteGlobalCount();
+        const nextState = remote
+          ? normalizeStoredState({
+              ...refreshed,
+              user: remote.user,
+              groups: remote.groups,
+              checkIns: mergeRemoteCheckIns(refreshed.checkIns, remote.checkIns, remote.user.id),
+              friends: remote.friends,
+              friendRequests: remote.friendRequests,
+              blockedUserIds: remote.blockedUserIds,
+              globalCount: remote.globalCount,
+              globalUserRank: remote.globalUserRank
+            })
+          : normalizeStoredState({
+              ...refreshed,
+              globalCount: fallbackGlobalCount ?? refreshed.globalCount
+            });
+        setState(nextState);
+        await persist(nextState);
+        return;
+      }
+      const seeded = createSeedState(authenticatedUser);
+      const remote = await fetchRemoteSnapshot(seeded.user);
       const fallbackGlobalCount = remote ? null : await fetchRemoteGlobalCount();
       const nextState = remote
         ? normalizeStoredState({
-            ...refreshed,
+            ...seeded,
             user: remote.user,
             groups: remote.groups,
-            checkIns: mergeRemoteCheckIns(refreshed.checkIns, remote.checkIns),
+            checkIns: mergeRemoteCheckIns(seeded.checkIns, remote.checkIns, remote.user.id),
             friends: remote.friends,
             friendRequests: remote.friendRequests,
             blockedUserIds: remote.blockedUserIds,
@@ -520,34 +601,17 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
             globalUserRank: remote.globalUserRank
           })
         : normalizeStoredState({
-            ...refreshed,
-            globalCount: fallbackGlobalCount ?? refreshed.globalCount
+            ...seeded,
+            globalCount: fallbackGlobalCount ?? seeded.globalCount
           });
       setState(nextState);
       await persist(nextState);
-      return;
+    } catch (error) {
+      console.warn("Could not initialize Pintly data", errorMessage(error));
+      const fallback = normalizeStoredState(createSeedState(authenticatedUser));
+      setState(fallback);
+      await persist(fallback).catch((persistError) => console.warn("Could not persist fallback Pintly data", errorMessage(persistError)));
     }
-    const seeded = createSeedState(authenticatedUser);
-    const remote = await fetchRemoteSnapshot(seeded.user);
-    const fallbackGlobalCount = remote ? null : await fetchRemoteGlobalCount();
-    const nextState = remote
-      ? normalizeStoredState({
-          ...seeded,
-          user: remote.user,
-          groups: remote.groups,
-          checkIns: mergeRemoteCheckIns(seeded.checkIns, remote.checkIns),
-          friends: remote.friends,
-          friendRequests: remote.friendRequests,
-          blockedUserIds: remote.blockedUserIds,
-          globalCount: remote.globalCount,
-          globalUserRank: remote.globalUserRank
-        })
-      : normalizeStoredState({
-          ...seeded,
-          globalCount: fallbackGlobalCount ?? seeded.globalCount
-        });
-    setState(nextState);
-    await persist(nextState);
   }, [authenticatedUser, persist, storageKey]);
 
   useEffect(() => {
@@ -561,6 +625,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         const nextUser = {
           ...current.user,
           name,
+          favoriteBeer: input.favoriteBeer?.trim() ?? current.user.favoriteBeer,
           avatar: initialsFor(name),
           avatarUrl: input.avatarUrl ?? current.user.avatarUrl,
           avatarStoragePath: input.avatarStoragePath ?? current.user.avatarStoragePath,
@@ -986,6 +1051,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         photoImageHeight: input.photoImageHeight,
         photoBlurhash: input.photoBlurhash,
         photoSyncStatus: input.photoSyncStatus ?? (input.photoStoragePath || input.photoUrl ? "synced" : input.photoUri ? "queued" : undefined),
+        photoSyncError: input.photoSyncError,
         remoteSyncStatus: input.remoteSyncStatus ?? "queued",
         remoteSyncError: undefined,
         scannedBeerCount: input.scannedBeerCount,
@@ -1091,7 +1157,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
     const pending = state.checkIns.filter(
       (checkIn) =>
         checkIn.userId === state.user.id &&
-        checkIn.remoteSyncStatus === "queued" &&
+        (checkIn.remoteSyncStatus === "queued" || checkIn.remoteSyncStatus === "failed") &&
         isReadyForRemotePublish(checkIn) &&
         !remoteSyncingIds.current.has(checkIn.id)
     );
@@ -1105,7 +1171,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         void persist(next);
         return next;
       });
-      withTimeout(createRemoteCheckInFromLocal(checkIn), 12_000, "Stamp sync timed out")
+      withTimeout(createRemoteCheckInFromLocal(checkIn), 25_000, "Stamp sync timed out")
         .then(() => {
           setState((current) => {
             const next = {
@@ -1193,7 +1259,10 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
                 photoImageWidth: input.photoImageWidth ?? checkIn.photoImageWidth,
                 photoImageHeight: input.photoImageHeight ?? checkIn.photoImageHeight,
                 photoBlurhash: input.photoBlurhash ?? checkIn.photoBlurhash,
-                photoSyncStatus: input.photoSyncStatus ?? checkIn.photoSyncStatus
+                photoSyncStatus: input.photoSyncStatus ?? checkIn.photoSyncStatus,
+                photoSyncError: input.photoSyncError,
+                remoteSyncStatus: input.photoCloudflareImageId ? "queued" : checkIn.remoteSyncStatus,
+                remoteSyncError: input.photoCloudflareImageId ? undefined : checkIn.remoteSyncError
               }
             : checkIn
         );
@@ -1209,19 +1278,11 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
     configurePhotoUploadQueue({
       onStart: ({ checkInId }) => {
         updateCheckInPhoto(checkInId, {
-          photoSyncStatus: "syncing"
+          photoSyncStatus: "syncing",
+          photoSyncError: undefined
         });
       },
       onSuccess: async ({ checkInId, photoUrl, photoStoragePath, photoThumbnailUrl, photoThumbnailStoragePath, photoCloudflareImageId, photoImageWidth, photoImageHeight }) => {
-        await updateRemoteCheckInPhoto(checkInId, {
-          photoUrl,
-          photoStoragePath,
-          photoThumbnailUrl,
-          photoThumbnailStoragePath,
-          photoCloudflareImageId,
-          photoImageWidth,
-          photoImageHeight
-        });
         updateCheckInPhoto(checkInId, {
           photoUrl,
           photoStoragePath,
@@ -1230,17 +1291,42 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
           photoCloudflareImageId,
           photoImageWidth,
           photoImageHeight,
-          photoSyncStatus: "synced"
+          photoSyncStatus: "synced",
+          photoSyncError: undefined
         });
       },
-      onFailure: ({ checkInId, recoverable }) => {
+      onFailure: ({ checkInId, recoverable, error }) => {
         updateCheckInPhoto(checkInId, {
-          photoSyncStatus: recoverable ? "queued" : "failed"
+          photoSyncStatus: recoverable ? "queued" : "failed",
+          photoSyncError: error
         });
       }
     });
     return startPhotoUploadQueueLifecycle();
   }, [updateCheckInPhoto]);
+
+  useEffect(() => {
+    state.checkIns
+      .filter(
+        (checkIn) =>
+          checkIn.userId === state.user.id &&
+          Boolean(checkIn.photoUri) &&
+          !checkIn.photoCloudflareImageId &&
+          checkIn.photoSyncStatus !== "syncing" &&
+          checkIn.photoSyncStatus !== "synced" &&
+          checkIn.photoSyncStatus !== "failed"
+      )
+      .forEach((checkIn) => {
+        void enqueuePhotoUpload({
+          checkInId: checkIn.id,
+          localUri: checkIn.photoUri!,
+          userId: state.user.id,
+          width: checkIn.photoImageWidth,
+          height: checkIn.photoImageHeight,
+          groupIds: checkIn.groupIds
+        });
+      });
+  }, [state.checkIns, state.user.id]);
 
   const deleteCheckIn = useCallback(
     (checkInId: string) => {
@@ -1265,6 +1351,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         void persist(next);
         return next;
       });
+      void cancelPhotoUpload(checkInId);
       syncRemote(deleteRemoteCheckIn(checkInId));
       const retryTimer = remoteRetryTimers.current.get(checkInId);
       if (retryTimer) {
@@ -1306,7 +1393,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         });
         const next = { ...current, checkIns: nextCheckIns };
         void persist(next);
-        syncRemote(toggleRemoteReaction(checkInId, current.user.id, wasReacted));
+        syncRemote(toggleRemoteReaction(checkInId, wasReacted));
         return next;
       });
     },
@@ -1402,8 +1489,8 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
   }, [storageKey]);
 
   const getGroupActivity = useCallback(
-    (groupId: string) => state.checkIns.filter((checkIn) => checkIn.groupIds.includes(groupId) && !state.blockedUserIds.includes(checkIn.userId)),
-    [state.blockedUserIds, state.checkIns]
+    (groupId: string) => groupActivity(state.checkIns, groupId, state.user.id, state.blockedUserIds),
+    [state.blockedUserIds, state.checkIns, state.user.id]
   );
 
   const getGroupLeaderboard = useCallback(
@@ -1418,7 +1505,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
 
   const getGroupStats = useCallback(
     (groupId: string): GroupStats => {
-      const activity = state.checkIns.filter((checkIn) => checkIn.groupIds.includes(groupId));
+      const activity = groupActivity(state.checkIns, groupId, state.user.id, state.blockedUserIds);
       const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
       const monthAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
       const group = state.groups.find((item) => item.id === groupId);
@@ -1431,7 +1518,7 @@ export function PassportProvider({ children, authenticatedUser }: PassportProvid
         ]
       };
     },
-    [state.checkIns, state.groups]
+    [state.blockedUserIds, state.checkIns, state.groups, state.user.id]
   );
 
   const resetDemoData = useCallback(async () => {
@@ -1525,27 +1612,18 @@ function errorMessage(error: unknown) {
 }
 
 function withTimeout<T>(task: Promise<T>, ms: number, message: string) {
-  return Promise.race<T>([
-    task,
-    new Promise<T>((_, reject) => {
-      setTimeout(() => reject(new Error(message)), ms);
-    })
-  ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race<T>([task, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 function isReadyForRemotePublish(checkIn: BeerCheckIn) {
-  if (!checkIn.photoUri) return true;
-  return hasRemotePhoto(checkIn);
-}
-
-function hasRemotePhoto(checkIn: BeerCheckIn) {
-  return Boolean(
-    checkIn.photoCloudflareImageId ||
-      checkIn.photoStoragePath ||
-      checkIn.photoUrl ||
-      checkIn.photoThumbnailStoragePath ||
-      checkIn.photoThumbnailUrl
-  );
+  if (checkIn.photoUri && !hasRemotePhoto(checkIn)) return false;
+  return Boolean(checkIn.id);
 }
 
 export function usePassport() {

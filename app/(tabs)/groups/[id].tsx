@@ -7,9 +7,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Avatar } from "@/components/Avatar";
 import { CommentButton, CommentsSheet } from "@/components/CommentsSheet";
 import { EmptyState } from "@/components/EmptyState";
-import { LikersModal } from "@/components/LikersModal";
+import { PostDetailModal } from "@/components/PostDetailModal";
 import { ProgressBar } from "@/components/ProgressBar";
-import { ZoomablePhotoModal } from "@/components/ZoomablePhotoModal";
 import { compressBackdropPhoto } from "@/services/photoCompression";
 import { buildCloudflareImageUrl, deleteCloudflareImage, isGroupBackdropStorageConfigured, uploadGroupBackdrop } from "@/services/photoStorage";
 import { usePassport } from "@/store/passportStore";
@@ -18,6 +17,7 @@ import { BeerCheckIn, BeerComment, Group, GroupMember, ModerationReportReason } 
 import { broadPlaceLabel, formatNumber, timeAgo } from "@/utils/format";
 import { getGroupMilestoneProgress } from "@/utils/groupMilestones";
 import { groupPhotoFor } from "@/utils/groupVisuals";
+import { checkInPhotoUrl } from "@/utils/photoUrls";
 import { reactionUsersForCheckIn } from "@/utils/reactions";
 
 type DetailTab = "Activity" | "Leaderboard" | "About";
@@ -29,6 +29,7 @@ export default function GroupDetailScreen() {
   const router = useRouter();
   const [tab, setTab] = useState<DetailTab>("Activity");
   const [timeframe, setTimeframe] = useState<Timeframe>("All Time");
+  const [membersOpen, setMembersOpen] = useState(false);
   const {
     groups,
     user,
@@ -155,7 +156,7 @@ export default function GroupDetailScreen() {
         <View style={{ paddingHorizontal: 20, gap: 18 }}>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
             <HeroMetric label="Beers" value={formatNumber(group.beerCount)} theme={theme} />
-            <HeroMetric label="Members" value={formatNumber(group.memberCount)} theme={theme} />
+            <HeroMetric label="Members" value={formatNumber(group.memberCount)} onPress={() => setMembersOpen(true)} theme={theme} />
             <HeroMetric label="Active this week" value={formatNumber(metrics.activeThisWeek)} theme={theme} />
             <HeroMetric label="This month" value={formatNumber(metrics.beersThisMonth)} theme={theme} />
           </View>
@@ -249,6 +250,17 @@ export default function GroupDetailScreen() {
           ) : null}
         </View>
       </ScrollView>
+      <GroupMembersModal
+        visible={membersOpen}
+        group={group}
+        currentUserId={user.id}
+        onClose={() => setMembersOpen(false)}
+        onMemberPress={(memberId) => {
+          setMembersOpen(false);
+          openMemberProfile(memberId);
+        }}
+        theme={theme}
+      />
     </SafeAreaView>
   );
 }
@@ -314,8 +326,7 @@ function CrewActivityRow({
   theme: AppTheme;
 }) {
   const [editOpen, setEditOpen] = useState(false);
-  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
-  const [likersOpen, setLikersOpen] = useState(false);
+  const [postDetailOpen, setPostDetailOpen] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const count = activity.quantity ?? 1;
   const photo = photoFor(activity);
@@ -338,14 +349,22 @@ function CrewActivityRow({
   }
 
   function handlePostPress() {
-    if (reacted) return;
     const now = Date.now();
     if (now - lastPostTap.current < 280) {
+      if (singleTapTimer.current) {
+        clearTimeout(singleTapTimer.current);
+        singleTapTimer.current = null;
+      }
       lastPostTap.current = 0;
       likeFromDoubleTap();
       return;
     }
     lastPostTap.current = now;
+    singleTapTimer.current = setTimeout(() => {
+      setPostDetailOpen(true);
+      singleTapTimer.current = null;
+      lastPostTap.current = 0;
+    }, 280);
   }
 
   function handlePhotoPress() {
@@ -361,10 +380,20 @@ function CrewActivityRow({
     }
     lastPhotoTap.current = now;
     singleTapTimer.current = setTimeout(() => {
-      setPreviewPhoto(fullPhoto ?? photo ?? null);
+      setPostDetailOpen(true);
       singleTapTimer.current = null;
       lastPhotoTap.current = 0;
     }, 260);
+  }
+
+  function handleReactPress() {
+    if (singleTapTimer.current) {
+      clearTimeout(singleTapTimer.current);
+      singleTapTimer.current = null;
+    }
+    lastPostTap.current = 0;
+    lastPhotoTap.current = 0;
+    onReact(activity.id);
   }
 
   function confirmDelete() {
@@ -377,15 +406,30 @@ function CrewActivityRow({
   return (
     <Pressable onPress={handlePostPress} style={cardStyle(theme, 12, theme.radius.lg)}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-        <Pressable onPress={() => onUserPress(activity.userId)} hitSlop={8} style={({ pressed }) => ({ opacity: pressed ? 0.76 : 1 })}>
+        <Pressable
+          onPress={(event) => {
+            event.stopPropagation();
+            onUserPress(activity.userId);
+          }}
+          hitSlop={2}
+          style={({ pressed }) => ({ opacity: pressed ? 0.76 : 1 })}
+        >
           <Avatar label={activity.userAvatar} uri={activity.userAvatarUrl} size={42} />
         </Pressable>
         <View style={{ flex: 1 }}>
-          <Pressable onPress={() => onUserPress(activity.userId)} hitSlop={6} style={({ pressed }) => ({ opacity: pressed ? 0.72 : 1 })}>
-            <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>
-              {activity.userName} <Text style={{ color: theme.colors.textSecondary, fontWeight: "800" }}>logged {count === 1 ? "a beer" : `${count} beers`}</Text>
-            </Text>
-          </Pressable>
+          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+            <Pressable
+              onPress={(event) => {
+                event.stopPropagation();
+                onUserPress(activity.userId);
+              }}
+              hitSlop={2}
+              style={({ pressed }) => ({ opacity: pressed ? 0.72 : 1 })}
+            >
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>{activity.userName}</Text>
+            </Pressable>
+            <Text style={{ color: theme.colors.textSecondary, fontWeight: "800" }}> logged {count === 1 ? "a beer" : `${count} beers`}</Text>
+          </View>
           <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>{placeLine(activity)}</Text>
           <Text style={{ color: theme.colors.textMuted, marginTop: 4, fontSize: 12 }}>{timeAgo(activity.createdAt)}</Text>
         </View>
@@ -397,14 +441,34 @@ function CrewActivityRow({
       </View>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-          <View style={{ height: 36, minWidth: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, backgroundColor: theme.colors.card, borderRadius: theme.radius.pill }}>
-            <Pressable onPress={() => onReact(activity.id)} hitSlop={12} style={{ height: 36, justifyContent: "center", paddingLeft: 11 }}>
+          <Pressable
+            onPress={(event) => {
+              event.stopPropagation();
+              handleReactPress();
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={reacted ? "Unlike post" : "Like post"}
+            hitSlop={10}
+            style={({ pressed }) => ({
+              height: 40,
+              minWidth: 62,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 5,
+              backgroundColor: theme.colors.card,
+              borderRadius: theme.radius.pill,
+              paddingHorizontal: 12,
+              opacity: pressed ? 0.72 : 1
+            })}
+          >
+            <View style={{ height: 40, justifyContent: "center" }}>
               <Ionicons name={reacted ? "heart" : "heart-outline"} color={reacted ? theme.colors.error : theme.colors.textPrimary} size={18} />
-            </Pressable>
-            <Pressable onPress={() => setLikersOpen(true)} hitSlop={12} style={{ height: 36, justifyContent: "center", paddingRight: 11, minWidth: 22 }}>
+            </View>
+            <View style={{ height: 40, justifyContent: "center", minWidth: 22 }}>
               <Text style={{ color: reacted ? theme.colors.error : theme.colors.textPrimary, fontWeight: "900", fontSize: 13 }}>{activity.reactions}</Text>
-            </Pressable>
-          </View>
+            </View>
+          </Pressable>
           <CommentButton count={activity.comments.length} onPress={() => setCommentsOpen(true)} theme={theme} compact />
         </View>
         {canEdit ? (
@@ -429,8 +493,29 @@ function CrewActivityRow({
         }}
         theme={theme}
       />
-      <PhotoPreviewModal uri={previewPhoto} onClose={() => setPreviewPhoto(null)} theme={theme} />
-      <LikersModal visible={likersOpen} reactionUsers={reactionUsers} onUserPress={onUserPress} onClose={() => setLikersOpen(false)} theme={theme} />
+      <PostDetailModal
+        visible={postDetailOpen}
+        checkIn={activity}
+        currentUserId={currentUserId}
+        photoUri={fullPhoto ?? photo}
+        reacted={reacted}
+        reactionUsers={reactionUsers}
+        onReact={onReact}
+        onAddComment={onAddComment}
+        onDeleteComment={onDeleteComment}
+        onReportComment={({ comment, reason, details }) =>
+          onReportComment({
+            reportedUserId: comment.userId,
+            checkInId: activity.id,
+            groupId: activity.groupIds[0],
+            reason,
+            details
+          })
+        }
+        onUserPress={onUserPress}
+        onClose={() => setPostDetailOpen(false)}
+        theme={theme}
+      />
       <CommentsSheet
         visible={commentsOpen}
         checkIn={activity}
@@ -625,11 +710,122 @@ function JoinRequestsCard({
   );
 }
 
-function HeroMetric({ label, value, theme }: { label: string; value: string; theme: AppTheme }) {
+function GroupMembersModal({
+  visible,
+  group,
+  currentUserId,
+  onClose,
+  onMemberPress,
+  theme
+}: {
+  visible: boolean;
+  group: Group;
+  currentUserId: string;
+  onClose: () => void;
+  onMemberPress: (memberId: string) => void;
+  theme: AppTheme;
+}) {
+  const members = useMemo(
+    () => [...group.members].sort((a, b) => (b.beerCount ?? 0) - (a.beerCount ?? 0) || a.name.localeCompare(b.name)),
+    [group.members]
+  );
+
   return (
-    <View style={{ width: "48.5%", backgroundColor: theme.colors.card, borderWidth: 1, borderColor: theme.colors.cardBorder, borderRadius: theme.radius.md, padding: 11, ...theme.shadow.card }}>
-      <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 19 }}>{value}</Text>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable onPress={onClose} style={{ flex: 1, justifyContent: "flex-end", backgroundColor: theme.colors.modalBackdrop }}>
+        <Pressable
+          onPress={(event) => event.stopPropagation()}
+          style={{
+            maxHeight: "76%",
+            backgroundColor: theme.colors.card,
+            borderTopLeftRadius: 28,
+            borderTopRightRadius: 28,
+            borderWidth: 1,
+            borderColor: theme.colors.cardBorder,
+            padding: 20,
+            paddingBottom: 24
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: theme.colors.accent, fontWeight: "900", fontSize: 12, letterSpacing: 1.4 }}>MEMBERS</Text>
+              <Text numberOfLines={1} style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 24, marginTop: 2 }}>{group.name}</Text>
+            </View>
+            <Pressable onPress={onClose} hitSlop={8}>
+              <Ionicons name="close" color={theme.colors.textPrimary} size={26} />
+            </Pressable>
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <View style={{ gap: 10, paddingBottom: 8 }}>
+              {members.map((member) => {
+                const current = member.userId === currentUserId || member.isCurrentUser;
+                const founder = member.userId === group.founderId;
+                return (
+                  <Pressable
+                    key={member.userId}
+                    onPress={() => onMemberPress(member.userId)}
+                    style={({ pressed }) => ({
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 10,
+                      borderRadius: theme.radius.md,
+                      backgroundColor: current ? theme.colors.accentSoft : theme.colors.surfaceAlt,
+                      borderWidth: 1,
+                      borderColor: current ? theme.colors.accent : theme.colors.cardBorder,
+                      padding: 11,
+                      opacity: pressed ? 0.76 : 1
+                    })}
+                  >
+                    <Avatar label={member.avatar} uri={member.avatarUrl} size={42} borderColor={current ? theme.colors.accent : theme.colors.cardBorder} />
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                        <Text numberOfLines={1} style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 16, maxWidth: founder ? 170 : 230 }}>{member.name}</Text>
+                        {founder ? (
+                          <View style={{ borderRadius: theme.radius.pill, backgroundColor: theme.colors.accent, paddingHorizontal: 8, paddingVertical: 3 }}>
+                            <Text style={{ color: theme.colors.textOnPrimary, fontWeight: "900", fontSize: 10 }}>FOUNDER</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      <Text style={{ color: theme.colors.textSecondary, marginTop: 3, fontSize: 12 }}>
+                        {formatNumber(member.beerCount)} beers - {formatNumber(member.checkInCount)} logs
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" color={theme.colors.iconSecondary} size={18} />
+                  </Pressable>
+                );
+              })}
+            </View>
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function HeroMetric({ label, value, onPress, theme }: { label: string; value: string; onPress?: () => void; theme: AppTheme }) {
+  const content = (
+    <>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 19 }}>{value}</Text>
+        {onPress ? <Ionicons name="people-outline" color={theme.colors.accent} size={18} /> : null}
+      </View>
       <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.82} style={{ color: theme.colors.textSecondary, fontWeight: "800", fontSize: 11, marginTop: 3 }}>{label}</Text>
+    </>
+  );
+  const style = { width: "48.5%" as const, backgroundColor: theme.colors.card, borderWidth: 1, borderColor: theme.colors.cardBorder, borderRadius: theme.radius.md, padding: 11, ...theme.shadow.card };
+
+  if (onPress) {
+    return (
+      <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel="View group members" style={({ pressed }) => ({ ...style, opacity: pressed ? 0.78 : 1 })}>
+        {content}
+      </Pressable>
+    );
+  }
+
+  return (
+    <View style={style}>
+      {content}
     </View>
   );
 }
@@ -727,13 +923,9 @@ function placeLine(activity: BeerCheckIn) {
 }
 
 function photoFor(activity: BeerCheckIn) {
-  return buildCloudflareImageUrl(activity.photoCloudflareImageId, "feed") ?? activity.photoUrl ?? activity.photoUri ?? activity.photoThumbnailUrl ?? buildCloudflareImageUrl(activity.photoCloudflareImageId, "thumbnail");
+  return checkInPhotoUrl(activity, "feed");
 }
 
 function fullPhotoFor(activity: BeerCheckIn) {
-  return buildCloudflareImageUrl(activity.photoCloudflareImageId, "feed") ?? activity.photoUrl ?? activity.photoUri ?? photoFor(activity);
-}
-
-function PhotoPreviewModal({ uri, onClose, theme }: { uri: string | null; onClose: () => void; theme: AppTheme }) {
-  return <ZoomablePhotoModal visible={Boolean(uri)} uri={uri} onClose={onClose} theme={theme} />;
+  return checkInPhotoUrl(activity, "full") ?? photoFor(activity);
 }

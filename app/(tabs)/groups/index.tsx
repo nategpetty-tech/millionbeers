@@ -7,15 +7,15 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { CreateGroupModal } from "@/components/CreateGroupModal";
 import { Avatar } from "@/components/Avatar";
 import { CommentButton, CommentsSheet } from "@/components/CommentsSheet";
-import { LikersModal } from "@/components/LikersModal";
-import { ZoomablePhotoModal } from "@/components/ZoomablePhotoModal";
-import { buildCloudflareImageUrl } from "@/services/photoStorage";
+import { PostDetailModal } from "@/components/PostDetailModal";
 import { usePassport } from "@/store/passportStore";
 import { AppTheme, useAppTheme } from "@/theme";
-import { BeerCheckIn, BeerComment, Group, ModerationReportReason } from "@/types";
+import { BeerCheckIn, BeerComment, Group, GroupJoinRequest, ModerationReportReason } from "@/types";
+import { activityGroups, groupActivity, memberGroupsForUser, visibleActivity } from "@/utils/activityFeed";
 import { broadPlaceLabel, formatNumber, timeAgo } from "@/utils/format";
 import { GROUP_MILESTONE_TIERS } from "@/utils/groupMilestones";
 import { groupPhotoFor } from "@/utils/groupVisuals";
+import { checkInPhotoUrl } from "@/utils/photoUrls";
 import { reactionUsersForCheckIn } from "@/utils/reactions";
 
 type GroupMetrics = {
@@ -52,18 +52,17 @@ const groupMilestoneBadges: Record<number, ImageSourcePropType> = {
 export default function GroupsScreen() {
   const theme = useAppTheme();
   const router = useRouter();
-  const { groups, checkIns, blockedUserIds, user, requestJoinGroup, requestJoinGroupFromInvite, cancelJoinRequest, findGroupByInviteCode, initializeSeedData, reactToCheckIn, addCheckInComment, deleteCheckInComment, reportUser } = usePassport();
+  const { groups, checkIns, blockedUserIds, user, requestJoinGroup, requestJoinGroupFromInvite, cancelJoinRequest, approveJoinRequest, rejectJoinRequest, findGroupByInviteCode, initializeSeedData, reactToCheckIn, addCheckInComment, deleteCheckInComment, reportUser } = usePassport();
   const [query, setQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [searchingCloud, setSearchingCloud] = useState(false);
   const [remoteInviteGroup, setRemoteInviteGroup] = useState<Group | null>(null);
   const [remoteInviteQuery, setRemoteInviteQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView | null>(null);
   const normalizedQuery = query.toLowerCase().trim();
   const normalizedInviteQuery = query.trim().toUpperCase();
-  const myGroups = useMemo(() => groups.filter((group) => group.members.some((member) => member.userId === user.id)), [groups, user.id]);
+  const myGroups = useMemo(() => memberGroupsForUser(groups, user.id), [groups, user.id]);
   const metricsByGroup = useMemo(() => buildMetrics(groups, checkIns, blockedUserIds, user.id), [blockedUserIds, checkIns, groups, user.id]);
   const crewActivity = useMemo(() => buildCrewActivity(myGroups, checkIns, blockedUserIds, user.id), [blockedUserIds, checkIns, myGroups, user.id]);
   const topCrewsThisMonth = useMemo(
@@ -83,15 +82,11 @@ export default function GroupsScreen() {
       ),
     [groups, user.id]
   );
-  const founderRequestGroups = useMemo(
+  const incomingJoinRequests = useMemo(
     () =>
       groups
         .filter((group) => group.founderId === user.id)
-        .map((group) => ({
-          group,
-          pendingCount: group.pendingRequests.filter((request) => request.status === "pending").length
-        }))
-        .filter((item) => item.pendingCount > 0),
+        .flatMap((group) => group.pendingRequests.filter((request) => request.status === "pending").map((request) => ({ group, request }))),
     [groups, user.id]
   );
   const searchResults = useMemo(() => {
@@ -233,6 +228,18 @@ export default function GroupsScreen() {
             ) : null}
           </View>
 
+          {incomingJoinRequests.length || pendingMemberships.length ? (
+            <JoinRequestInbox
+              incomingRequests={incomingJoinRequests}
+              pendingMemberships={pendingMemberships}
+              onOpenGroup={(groupId) => router.push(`/groups/${groupId}`)}
+              onApprove={(groupId, requestId) => approveJoinRequest(groupId, requestId)}
+              onReject={(groupId, requestId) => rejectJoinRequest(groupId, requestId)}
+              onCancel={cancelPendingRequest}
+              theme={theme}
+            />
+          ) : null}
+
           {myGroups.length ? (
             <>
               <View style={{ gap: 12 }}>
@@ -258,7 +265,6 @@ export default function GroupsScreen() {
                         onAddComment={addCheckInComment}
                         onDeleteComment={deleteCheckInComment}
                         onReportComment={reportUser}
-                        onPhotoPress={setPreviewPhoto}
                         onUserPress={openMemberProfile}
                         theme={theme}
                       />
@@ -300,44 +306,20 @@ export default function GroupsScreen() {
             </View>
           )}
 
-          {founderRequestGroups.length || pendingMemberships.length ? (
+          {discoverGroups.length ? (
             <View style={{ paddingHorizontal: 20, gap: 10 }}>
-              <SectionHeader title="Crew Requests" theme={theme} />
-              {founderRequestGroups.map(({ group, pendingCount }) => (
-                <Pressable key={group.id} onPress={() => router.push(`/groups/${group.id}`)} style={requestCardStyle(theme)}>
-                  <Ionicons name="person-add-outline" color={theme.colors.accent} size={20} />
-                  <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", flex: 1 }}>{group.name}</Text>
-                  <Text style={{ color: theme.colors.textSecondary, fontWeight: "800" }}>{pendingCount} pending</Text>
-                </Pressable>
-              ))}
-              {pendingMemberships.map((group) => (
-                <View key={group.id} style={requestCardStyle(theme)}>
-                  <Ionicons name="hourglass-outline" color={theme.colors.accent} size={20} />
-                  <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", flex: 1 }}>{group.name}</Text>
-                  <Pressable onPress={() => cancelPendingRequest(group)} hitSlop={8} style={{ paddingVertical: 4, paddingHorizontal: 4 }}>
-                    <Text style={{ color: theme.colors.accent, fontWeight: "900" }}>Cancel</Text>
-                  </Pressable>
-                </View>
-              ))}
-            </View>
-          ) : null}
-
-          <View style={{ paddingHorizontal: 20, gap: 10 }}>
-            {discoverGroups.length ? (
+              <SectionHeader title="Discover Crews" detail="More crews you can request to join." theme={theme} />
               <View style={{ gap: 10 }}>
                 {discoverGroups.map((group) => {
                   const pending = group.pendingRequests.some((request) => request.userId === user.id && request.status === "pending");
                   return <DiscoverGroupCard key={group.id} group={group} pending={pending} onJoin={() => requestJoin(group)} onCancel={() => cancelPendingRequest(group)} theme={theme} />;
                 })}
               </View>
-            ) : (
-              <EmptyCrewCard title="No matching groups" body="Try the exact crew name or invite code." theme={theme} />
-            )}
-          </View>
+            </View>
+          ) : null}
         </View>
       </ScrollView>
       <CreateGroupModal visible={createOpen} onClose={() => setCreateOpen(false)} />
-      <PhotoPreviewModal uri={previewPhoto} onClose={() => setPreviewPhoto(null)} theme={theme} />
     </SafeAreaView>
   );
 }
@@ -347,12 +329,8 @@ function buildMetrics(groups: Group[], checkIns: BeerCheckIn[], blockedUserIds: 
   const now = new Date();
   const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
   groups.forEach((group) => {
-    const allActivity = checkIns.filter((checkIn) => checkIn.groupIds.includes(group.id));
-    const activity = allActivity
-      .filter((checkIn) => checkIn.userId === currentUserId || !blockedUserIds.includes(checkIn.userId))
-      .filter((checkIn) => checkIn.groupIds.includes(group.id))
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    const monthActivity = allActivity.filter((checkIn) => {
+    const activity = groupActivity(checkIns, group.id, currentUserId, blockedUserIds);
+    const monthActivity = activity.filter((checkIn) => {
       const date = new Date(checkIn.createdAt);
       return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
     });
@@ -368,15 +346,13 @@ function buildMetrics(groups: Group[], checkIns: BeerCheckIn[], blockedUserIds: 
 }
 
 function buildCrewActivity(myGroups: Group[], checkIns: BeerCheckIn[], blockedUserIds: string[], currentUserId: string): CrewActivityItem[] {
-  const memberGroupById = new Map(myGroups.map((group) => [group.id, group]));
-  return checkIns
-    .filter((checkIn) => checkIn.userId === currentUserId || !blockedUserIds.includes(checkIn.userId))
+  const memberGroupIds = new Set(myGroups.map((group) => group.id));
+  return visibleActivity(checkIns, currentUserId, blockedUserIds)
     .map((activity) => ({
       activity,
-      groups: activity.groupIds.map((groupId) => memberGroupById.get(groupId)).filter((group): group is Group => Boolean(group))
+      groups: activityGroups(activity, myGroups, memberGroupIds)
     }))
     .filter((item) => item.groups.length > 0)
-    .sort((a, b) => new Date(b.activity.createdAt).getTime() - new Date(a.activity.createdAt).getTime())
     .slice(0, 4);
 }
 
@@ -413,6 +389,68 @@ function CrewListCard({ group, onPress, theme }: { group: Group; onPress: () => 
   );
 }
 
+function JoinRequestInbox({
+  incomingRequests,
+  pendingMemberships,
+  onOpenGroup,
+  onApprove,
+  onReject,
+  onCancel,
+  theme
+}: {
+  incomingRequests: Array<{ group: Group; request: GroupJoinRequest }>;
+  pendingMemberships: Group[];
+  onOpenGroup: (groupId: string) => void;
+  onApprove: (groupId: string, requestId: string) => void;
+  onReject: (groupId: string, requestId: string) => void;
+  onCancel: (group: Group) => void;
+  theme: AppTheme;
+}) {
+  return (
+    <View style={{ paddingHorizontal: 20, gap: 10 }}>
+      <SectionHeader title="Join Requests" detail="Requests are grouped here so you can see exactly which crew they are for." theme={theme} />
+      <View style={{ gap: 10 }}>
+        {incomingRequests.map(({ group, request }) => (
+          <View key={`${group.id}-${request.id}`} style={requestCardStyle(theme)}>
+            <Pressable onPress={() => onOpenGroup(group.id)} hitSlop={8} style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 10, flex: 1, opacity: pressed ? 0.76 : 1 })}>
+              <Avatar label={request.avatar} uri={request.avatarUrl} size={40} borderColor={theme.colors.accent} />
+              <View style={{ flex: 1 }}>
+                <Text numberOfLines={1} style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>{request.name}</Text>
+                <Text numberOfLines={2} style={{ color: theme.colors.textSecondary, marginTop: 2 }}>
+                  Wants to join <Text style={{ color: theme.colors.accent, fontWeight: "900" }}>{group.name}</Text>
+                </Text>
+                <Text style={{ color: theme.colors.textMuted, marginTop: 2, fontSize: 11, fontWeight: "800" }}>
+                  {request.source === "invite" ? "Used invite code" : "Found by search"} - {timeAgo(request.requestedAt)}
+                </Text>
+              </View>
+            </Pressable>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Pressable onPress={() => onApprove(group.id, request.id)} style={{ backgroundColor: theme.colors.accent, borderRadius: theme.radius.pill, paddingHorizontal: 10, paddingVertical: 8 }}>
+                <Text style={{ color: theme.colors.textOnPrimary, fontWeight: "900", fontSize: 12 }}>Approve</Text>
+              </Pressable>
+              <Pressable onPress={() => onReject(group.id, request.id)} hitSlop={8}>
+                <Ionicons name="close-circle" color={theme.colors.danger} size={26} />
+              </Pressable>
+            </View>
+          </View>
+        ))}
+        {pendingMemberships.map((group) => (
+          <View key={group.id} style={requestCardStyle(theme)}>
+            <Ionicons name="hourglass-outline" color={theme.colors.accent} size={20} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>{group.name}</Text>
+              <Text style={{ color: theme.colors.textSecondary, marginTop: 2 }}>Your request is pending</Text>
+            </View>
+            <Pressable onPress={() => onCancel(group)} hitSlop={8} style={{ paddingVertical: 4, paddingHorizontal: 4 }}>
+              <Text style={{ color: theme.colors.accent, fontWeight: "900" }}>Cancel</Text>
+            </Pressable>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function latestGroupMilestone(beerCount: number) {
   const count = Math.max(0, Math.floor(Number.isFinite(beerCount) ? beerCount : 0));
   return [...GROUP_MILESTONE_TIERS].reverse().find((tier) => count >= tier);
@@ -426,7 +464,6 @@ function CrewActivityRow({
   onAddComment,
   onDeleteComment,
   onReportComment,
-  onPhotoPress,
   onUserPress,
   theme
 }: {
@@ -437,11 +474,10 @@ function CrewActivityRow({
   onAddComment: (checkInId: string, body: string) => void;
   onDeleteComment: (checkInId: string, commentId: string) => void;
   onReportComment: (input: { reportedUserId: string; checkInId?: string; groupId?: string; reason: ModerationReportReason; details?: string }) => void;
-  onPhotoPress: (uri: string) => void;
   onUserPress: (groupId: string, userId: string) => void;
   theme: AppTheme;
 }) {
-  const [likersOpen, setLikersOpen] = useState(false);
+  const [postDetailOpen, setPostDetailOpen] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const photo = photoFor(activity);
   const fullPhoto = fullPhotoFor(activity);
@@ -449,45 +485,157 @@ function CrewActivityRow({
   const primaryGroup = groups[0];
   const reacted = activity.reactedBy.includes(currentUserId);
   const reactionUsers = reactionUsersForCheckIn(activity, currentUserId);
+  const lastPostTap = useRef(0);
+  const lastPhotoTap = useRef(0);
+  const singleTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (singleTapTimer.current) clearTimeout(singleTapTimer.current);
+    };
+  }, []);
+
+  function likeFromDoubleTap() {
+    if (!reacted) onReact(activity.id);
+  }
+
+  function handlePostPress() {
+    const now = Date.now();
+    if (now - lastPostTap.current < 280) {
+      if (singleTapTimer.current) {
+        clearTimeout(singleTapTimer.current);
+        singleTapTimer.current = null;
+      }
+      lastPostTap.current = 0;
+      likeFromDoubleTap();
+      return;
+    }
+    lastPostTap.current = now;
+    singleTapTimer.current = setTimeout(() => {
+      setPostDetailOpen(true);
+      singleTapTimer.current = null;
+      lastPostTap.current = 0;
+    }, 280);
+  }
+
+  function handlePhotoPress() {
+    const now = Date.now();
+    if (now - lastPhotoTap.current < 260) {
+      if (singleTapTimer.current) {
+        clearTimeout(singleTapTimer.current);
+        singleTapTimer.current = null;
+      }
+      lastPhotoTap.current = 0;
+      likeFromDoubleTap();
+      return;
+    }
+    lastPhotoTap.current = now;
+    singleTapTimer.current = setTimeout(() => {
+      setPostDetailOpen(true);
+      singleTapTimer.current = null;
+      lastPhotoTap.current = 0;
+    }, 260);
+  }
+
+  function handleReactPress() {
+    if (singleTapTimer.current) {
+      clearTimeout(singleTapTimer.current);
+      singleTapTimer.current = null;
+    }
+    lastPostTap.current = 0;
+    lastPhotoTap.current = 0;
+    onReact(activity.id);
+  }
+
   return (
-    <View style={cardStyle(theme, 12, theme.radius.lg)}>
+    <Pressable onPress={handlePostPress} style={cardStyle(theme, 12, theme.radius.lg)}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-        <Pressable onPress={() => primaryGroup && onUserPress(primaryGroup.id, activity.userId)} hitSlop={8} style={({ pressed }) => ({ opacity: pressed ? 0.76 : 1 })}>
+        <Pressable
+          onPress={(event) => {
+            event.stopPropagation();
+            if (primaryGroup) onUserPress(primaryGroup.id, activity.userId);
+          }}
+          hitSlop={2}
+          style={({ pressed }) => ({ opacity: pressed ? 0.76 : 1 })}
+        >
           <Avatar label={activity.userAvatar} uri={activity.userAvatarUrl} size={42} />
         </Pressable>
         <View style={{ flex: 1 }}>
-          <Pressable onPress={() => primaryGroup && onUserPress(primaryGroup.id, activity.userId)} hitSlop={6} style={({ pressed }) => ({ opacity: pressed ? 0.72 : 1 })}>
-            <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>{activity.userName} <Text style={{ color: theme.colors.textSecondary, fontWeight: "800" }}>logged {count === 1 ? "a beer" : `${count} beers`}</Text></Text>
-          </Pressable>
-          <Text style={{ color: theme.colors.textSecondary, marginTop: 3 }}>{placeLine(activity)}</Text>
-          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 5 }}>
-            <GroupSummaryPill groups={groups} theme={theme} />
-            <Text style={{ color: theme.colors.textMuted, fontSize: 12, fontWeight: "800" }}>{timeAgo(activity.createdAt)}</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+            <Pressable
+              onPress={(event) => {
+                event.stopPropagation();
+                if (primaryGroup) onUserPress(primaryGroup.id, activity.userId);
+              }}
+              hitSlop={2}
+              style={({ pressed }) => ({ opacity: pressed ? 0.72 : 1 })}
+            >
+              <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>{activity.userName}</Text>
+            </Pressable>
+            <Text style={{ color: theme.colors.textSecondary, fontWeight: "800" }}> logged {count === 1 ? "a beer" : `${count} beers`}</Text>
           </View>
+          <Text style={{ color: theme.colors.textSecondary, marginTop: 3 }}>{placeLine(activity)}</Text>
+          <Text style={{ color: theme.colors.textMuted, fontSize: 12, fontWeight: "800", marginTop: 5 }}>{timeAgo(activity.createdAt)}</Text>
         </View>
         {photo ? (
-          <Pressable onPress={() => onPhotoPress(fullPhoto ?? photo)} hitSlop={6}>
+          <Pressable onPress={handlePhotoPress} hitSlop={6}>
             <Image source={{ uri: photo }} style={{ width: 56, height: 62, borderRadius: 14, backgroundColor: theme.colors.surfaceAlt }} resizeMode="cover" />
           </Pressable>
         ) : null}
       </View>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-start", gap: 5, marginTop: 10 }}>
-        <View style={{ height: 36, minWidth: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, backgroundColor: theme.colors.card, borderRadius: theme.radius.pill }}>
-          <Pressable onPress={() => onReact(activity.id)} hitSlop={12} style={{ height: 36, justifyContent: "center", paddingLeft: 11 }}>
+        <Pressable
+          onPress={(event) => {
+            event.stopPropagation();
+            handleReactPress();
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={reacted ? "Unlike post" : "Like post"}
+          hitSlop={10}
+          style={({ pressed }) => ({
+            height: 40,
+            minWidth: 62,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 5,
+            backgroundColor: theme.colors.card,
+            borderRadius: theme.radius.pill,
+            paddingHorizontal: 12,
+            opacity: pressed ? 0.72 : 1
+          })}
+        >
+          <View style={{ height: 40, justifyContent: "center" }}>
             <Ionicons name={reacted ? "heart" : "heart-outline"} color={reacted ? theme.colors.error : theme.colors.textPrimary} size={18} />
-          </Pressable>
-          <Pressable onPress={() => setLikersOpen(true)} hitSlop={12} style={{ height: 36, justifyContent: "center", paddingRight: 11, minWidth: 22 }}>
+          </View>
+          <View style={{ height: 40, justifyContent: "center", minWidth: 22 }}>
             <Text style={{ color: reacted ? theme.colors.error : theme.colors.textPrimary, fontWeight: "900", fontSize: 13 }}>{activity.reactions}</Text>
-          </Pressable>
-        </View>
+          </View>
+        </Pressable>
         <CommentButton count={activity.comments.length} onPress={() => setCommentsOpen(true)} theme={theme} compact />
       </View>
       {activity.note ? <CaptionText text={activity.note} theme={theme} /> : null}
-      <LikersModal
-        visible={likersOpen}
+      <PostDetailModal
+        visible={postDetailOpen}
+        checkIn={activity}
+        currentUserId={currentUserId}
+        photoUri={fullPhoto ?? photo}
+        reacted={reacted}
         reactionUsers={reactionUsers}
+        onReact={onReact}
+        onAddComment={onAddComment}
+        onDeleteComment={onDeleteComment}
+        onReportComment={({ comment, reason, details }) =>
+          onReportComment({
+            reportedUserId: comment.userId,
+            checkInId: activity.id,
+            groupId: primaryGroup?.id,
+            reason,
+            details
+          })
+        }
         onUserPress={primaryGroup ? (userId) => onUserPress(primaryGroup.id, userId) : undefined}
-        onClose={() => setLikersOpen(false)}
+        onClose={() => setPostDetailOpen(false)}
         theme={theme}
       />
       <CommentsSheet
@@ -509,7 +657,7 @@ function CrewActivityRow({
         onClose={() => setCommentsOpen(false)}
         theme={theme}
       />
-    </View>
+    </Pressable>
   );
 }
 
@@ -560,29 +708,6 @@ function EmptyCrewCard({ title, body, theme }: { title: string; body: string; th
       <Text style={{ color: theme.colors.textSecondary, lineHeight: 20, marginTop: 5 }}>{body}</Text>
     </View>
   );
-}
-
-function GroupSummaryPill({ groups, theme }: { groups: Group[]; theme: AppTheme }) {
-  return (
-    <View
-      style={{
-        backgroundColor: theme.mode === "light" ? "rgba(245, 158, 11, 0.18)" : "rgba(245, 158, 11, 0.22)",
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: theme.mode === "light" ? "rgba(245, 158, 11, 0.26)" : "rgba(245, 158, 11, 0.34)",
-        paddingHorizontal: 8,
-        paddingVertical: 4
-      }}
-    >
-      <Text numberOfLines={1} style={{ color: theme.colors.accent, fontWeight: "900", fontSize: 11 }}>{groupSummary(groups)}</Text>
-    </View>
-  );
-}
-
-function groupSummary(groups: Group[]) {
-  if (!groups.length) return "Crew activity";
-  if (groups.length === 1) return groups[0].name;
-  return `${groups[0].name} + ${groups.length - 1} ${groups.length === 2 ? "other" : "others"}`;
 }
 
 function SectionHeader({ title, detail, theme, inset = false }: { title: string; detail?: string; theme: AppTheme; inset?: boolean }) {
@@ -678,13 +803,9 @@ function placeLine(activity: BeerCheckIn) {
 }
 
 function photoFor(activity: BeerCheckIn) {
-  return buildCloudflareImageUrl(activity.photoCloudflareImageId, "feed") ?? activity.photoUrl ?? activity.photoUri ?? activity.photoThumbnailUrl ?? buildCloudflareImageUrl(activity.photoCloudflareImageId, "thumbnail");
+  return checkInPhotoUrl(activity, "feed");
 }
 
 function fullPhotoFor(activity: BeerCheckIn) {
-  return buildCloudflareImageUrl(activity.photoCloudflareImageId, "feed") ?? activity.photoUrl ?? activity.photoUri ?? photoFor(activity);
-}
-
-function PhotoPreviewModal({ uri, onClose, theme }: { uri: string | null; onClose: () => void; theme: AppTheme }) {
-  return <ZoomablePhotoModal visible={Boolean(uri)} uri={uri} onClose={onClose} theme={theme} />;
+  return checkInPhotoUrl(activity, "full") ?? photoFor(activity);
 }

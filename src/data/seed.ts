@@ -3,6 +3,7 @@ import { Badge, BeerCheckIn, Challenge, Group, User } from "@/types";
 export const seedUser: User = {
   id: "user-current",
   name: "",
+  favoriteBeer: "",
   avatar: "PS",
   hasOnboarded: false,
   level: 1,

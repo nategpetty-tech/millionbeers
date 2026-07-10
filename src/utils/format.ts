@@ -17,9 +17,9 @@ export function timeAgo(iso: string) {
 }
 
 export function broadPlaceLabel(location: { city?: string; state?: string; country?: string }) {
-  const city = location.city?.trim();
-  const state = location.state?.trim();
-  const country = location.country?.trim();
+  const city = cleanPlacePart(location.city);
+  const state = cleanPlacePart(location.state);
+  const country = cleanPlacePart(location.country);
   const isUnitedStates = !country || ["us", "usa", "u.s.", "u.s.a.", "united states", "united states of america"].includes(country.toLowerCase());
 
   if (city && isUnitedStates && state) return `${city}, ${state}`;
@@ -27,6 +27,12 @@ export function broadPlaceLabel(location: { city?: string; state?: string; count
   if (city && state) return `${city}, ${state}`;
   if (city && country) return `${city}, ${country}`;
   return city || state || country || "Location hidden";
+}
+
+function cleanPlacePart(value?: string) {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed.toLowerCase() === "unknown") return undefined;
+  return trimmed;
 }
 
 export function makeId(prefix: string) {

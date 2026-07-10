@@ -1,26 +1,24 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Image, Text, View } from "react-native";
 import { theme } from "@/theme";
+import { profileBorderForBeerCount, profileBorderFrameSize } from "@/utils/profileBorders";
 
 type Props = {
   label: string;
   uri?: string;
   size?: number;
   borderColor?: string;
+  beerCount?: number;
 };
 
-export function Avatar({ label, uri, size = 40, borderColor = theme.colors.cardBorder }: Props) {
+export function Avatar({ label, uri, size = 40, borderColor = theme.colors.cardBorder, beerCount }: Props) {
   const [loadedUri, setLoadedUri] = useState<string | undefined>();
   const [failedUri, setFailedUri] = useState<string | undefined>();
   const failed = Boolean(uri && failedUri === uri);
   const loading = Boolean(uri && loadedUri !== uri && !failed);
-
-  useEffect(() => {
-    setLoadedUri(undefined);
-    setFailedUri(undefined);
-  }, [uri]);
-
-  return (
+  const profileBorder = profileBorderForBeerCount(beerCount);
+  const frameSize = profileBorderFrameSize(size);
+  const avatar = (
     <View
       style={{
         width: size,
@@ -57,4 +55,22 @@ export function Avatar({ label, uri, size = 40, borderColor = theme.colors.cardB
       ) : null}
     </View>
   );
+
+  useEffect(() => {
+    setLoadedUri(undefined);
+    setFailedUri(undefined);
+  }, [uri]);
+
+  if (profileBorder) {
+    return (
+      <View style={{ width: frameSize, height: frameSize, alignItems: "center", justifyContent: "center" }}>
+        <View style={{ position: "absolute", alignItems: "center", justifyContent: "center" }}>{avatar}</View>
+        <View pointerEvents="none" style={{ position: "absolute", width: frameSize, height: frameSize }}>
+          <Image source={profileBorder.source} style={{ width: frameSize, height: frameSize }} resizeMode="contain" />
+        </View>
+      </View>
+    );
+  }
+
+  return avatar;
 }

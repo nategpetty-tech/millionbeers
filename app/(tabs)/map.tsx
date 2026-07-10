@@ -6,11 +6,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { BeerMap, BeerMapPin } from "@/components/BeerMap";
 import { CheckInModal } from "@/components/CheckInModal";
 import { ZoomablePhotoModal } from "@/components/ZoomablePhotoModal";
-import { buildCloudflareImageUrl } from "@/services/photoStorage";
 import { usePassport } from "@/store/passportStore";
 import { AppTheme, useAppTheme } from "@/theme";
 import { BeerCheckIn } from "@/types";
 import { broadPlaceLabel, formatNumber } from "@/utils/format";
+import { checkInPhotoUrl } from "@/utils/photoUrls";
 
 const SAME_PLACE_METERS = 70;
 const mapPromptMascot = require("../../assets/map/select-place-mascot.png");
@@ -51,6 +51,7 @@ export default function MapScreen() {
   const [checkInOpen, setCheckInOpen] = useState(false);
   const [historyPin, setHistoryPin] = useState<PlacePin | null>(null);
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+  const [mapFocusKey, setMapFocusKey] = useState(0);
   const scrollRef = useRef<ScrollView | null>(null);
   const selectedCardY = useRef(0);
   const personalLogs = useMemo(() => checkIns.filter((item) => item.userId === user.id), [checkIns, user.id]);
@@ -84,6 +85,7 @@ export default function MapScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      setMapFocusKey((value) => value + 1);
       return () => {
         setSelectedId(null);
         setHistoryPin(null);
@@ -113,7 +115,7 @@ export default function MapScreen() {
           </View>
 
           <View style={{ borderRadius: 28, overflow: "hidden", ...theme.shadow.card }}>
-            <BeerMap pins={mapPins} selectedId={selectedPin?.id} onSelect={selectPin} />
+            <BeerMap pins={mapPins} selectedId={selectedPin?.id} onSelect={selectPin} focusKey={mapFocusKey} />
           </View>
 
           <View
@@ -525,9 +527,7 @@ function hasNamedPlace(log: BeerCheckIn) {
 }
 
 function placeSubtitle(pin: PlacePin) {
-  const cityState = [pin.city, pin.state].filter(Boolean).join(", ");
-  if (cityState) return cityState;
-  return pin.country || "Unknown location";
+  return broadPlaceLabel({ city: pin.city, state: pin.state, country: pin.country });
 }
 
 function cleanBeerName(log: BeerCheckIn) {
@@ -558,7 +558,7 @@ function placeLongitude(log: BeerCheckIn) {
 }
 
 function photoFor(log: BeerCheckIn) {
-  return buildCloudflareImageUrl(log.photoCloudflareImageId, "feed") ?? log.photoUrl ?? log.photoUri ?? log.photoThumbnailUrl ?? buildCloudflareImageUrl(log.photoCloudflareImageId, "thumbnail");
+  return checkInPhotoUrl(log, "feed");
 }
 
 function PhotoPreviewModal({ uri, onClose, theme }: { uri: string | null; onClose: () => void; theme: AppTheme }) {

@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useScrollToTop } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ImageSourcePropType } from "react-native";
@@ -8,15 +9,15 @@ import Svg, { Circle } from "react-native-svg";
 import { Avatar } from "@/components/Avatar";
 import { CheckInModal } from "@/components/CheckInModal";
 import { CommentButton, CommentsSheet } from "@/components/CommentsSheet";
-import { LikersModal } from "@/components/LikersModal";
-import { ZoomablePhotoModal } from "@/components/ZoomablePhotoModal";
-import { buildCloudflareImageUrl } from "@/services/photoStorage";
+import { PostDetailModal } from "@/components/PostDetailModal";
 import { usePassport } from "@/store/passportStore";
 import { AppTheme, useAppTheme } from "@/theme";
 import { BeerCheckIn, BeerComment, Group, ModerationReportReason } from "@/types";
+import { activityGroups, memberGroupIdSet, memberGroupsForUser, sortActivityNewestFirst, visibleActivity } from "@/utils/activityFeed";
 import { broadPlaceLabel, formatNumber, timeAgo } from "@/utils/format";
 import { GROUP_MILESTONE_TIERS } from "@/utils/groupMilestones";
 import { groupPhotoFor } from "@/utils/groupVisuals";
+import { checkInPhotoUrl } from "@/utils/photoUrls";
 import { reactionUsersForCheckIn } from "@/utils/reactions";
 
 type FeedFilter = "all" | "milestones";
@@ -62,14 +63,15 @@ const groupMilestoneBadges: Record<number, ImageSourcePropType> = {
 export default function JourneyScreen() {
   const theme = useAppTheme();
   const router = useRouter();
+  const scrollRef = useRef<ScrollView>(null);
   const [checkInOpen, setCheckInOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<FeedFilter>("all");
   const [visibleActivityCount, setVisibleActivityCount] = useState(3);
   const { user, groups, globalCount, checkIns, blockedUserIds, initializeSeedData, reactToCheckIn, addCheckInComment, deleteCheckInComment, reportUser } = usePassport();
-  const visibleCheckIns = useMemo(() => checkIns.filter((checkIn) => checkIn.userId === user.id || !blockedUserIds.includes(checkIn.userId)), [blockedUserIds, checkIns, user.id]);
-  const memberGroups = useMemo(() => groups.filter((group) => group.members.some((member) => member.userId === user.id)), [groups, user.id]);
-  const memberGroupIds = useMemo(() => new Set(memberGroups.map((group) => group.id)), [memberGroups]);
+  const visibleCheckIns = useMemo(() => visibleActivity(checkIns, user.id, blockedUserIds), [blockedUserIds, checkIns, user.id]);
+  const memberGroups = useMemo(() => memberGroupsForUser(groups, user.id), [groups, user.id]);
+  const memberGroupIds = useMemo(() => memberGroupIdSet(groups, user.id), [groups, user.id]);
   const weeklyGroupLogs = useMemo(() => visibleCheckIns.filter((checkIn) => isRecent(checkIn.createdAt, 7) && checkIn.groupIds.some((groupId) => memberGroupIds.has(groupId))), [memberGroupIds, visibleCheckIns]);
   const todayGroupLogs = useMemo(() => visibleCheckIns.filter((checkIn) => isToday(checkIn.createdAt) && checkIn.groupIds.some((groupId) => memberGroupIds.has(groupId))), [memberGroupIds, visibleCheckIns]);
   const pulseMetrics = useMemo(() => buildPulseMetrics(memberGroups, weeklyGroupLogs, todayGroupLogs), [memberGroups, todayGroupLogs, weeklyGroupLogs]);
@@ -80,6 +82,8 @@ export default function JourneyScreen() {
   }, [feedItems, filter]);
   const visibleFeed = filteredFeed.slice(0, visibleActivityCount);
   const hasMoreActivity = visibleActivityCount < filteredFeed.length;
+
+  useScrollToTop(scrollRef);
 
   useEffect(() => {
     void initializeSeedData();
@@ -109,6 +113,7 @@ export default function JourneyScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={{ paddingBottom: 120 }}
         refreshControl={
           <RefreshControl
@@ -239,13 +244,9 @@ function buildPulseMetrics(memberGroups: Group[], weeklyLogs: BeerCheckIn[], tod
 }
 
 function buildFeedItems(checkIns: BeerCheckIn[], groups: Group[], memberGroupIds: Set<string>): FeedItem[] {
-  const groupById = new Map(groups.map((group) => [group.id, group]));
   const logsWithGroups: FeedItem[] = checkIns
     .flatMap((checkIn) => {
-      const logGroups = checkIn.groupIds
-        .filter((groupId) => memberGroupIds.has(groupId))
-        .map((groupId) => groupById.get(groupId))
-        .filter((group): group is Group => Boolean(group));
+      const logGroups = activityGroups(checkIn, groups, memberGroupIds);
       const primaryGroup = logGroups[0];
       if (!primaryGroup) return [];
       return [{
@@ -283,8 +284,7 @@ function buildFeedItems(checkIns: BeerCheckIn[], groups: Group[], memberGroupIds
     });
 
   const allItems = [...logsWithGroups, ...milestoneItems];
-  return allItems
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return sortActivityNewestFirst(allItems);
 }
 
 function MissionProgressCard({ count, theme }: { count: number | null | undefined; theme: AppTheme }) {
@@ -512,12 +512,11 @@ function LogFeedCard({
   onUserPress: (groupId: string, userId: string) => void;
   theme: AppTheme;
 }) {
-  const [photoOpen, setPhotoOpen] = useState(false);
-  const [likersOpen, setLikersOpen] = useState(false);
+  const [postDetailOpen, setPostDetailOpen] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
   const photo = photoFor(item.checkIn);
-  const fullPhoto = buildCloudflareImageUrl(item.checkIn.photoCloudflareImageId, "full") ?? item.checkIn.photoUrl ?? item.checkIn.photoUri ?? photo;
+  const fullPhoto = checkInPhotoUrl(item.checkIn, "full") ?? photo;
   const reacted = item.checkIn.reactedBy.includes(currentUserId);
   const reactionUsers = reactionUsersForCheckIn(item.checkIn, currentUserId);
   const lastPostTap = useRef(0);
@@ -535,14 +534,22 @@ function LogFeedCard({
   }
 
   function handlePostPress() {
-    if (reacted) return;
     const now = Date.now();
     if (now - lastPostTap.current < 280) {
+      if (singleTapTimer.current) {
+        clearTimeout(singleTapTimer.current);
+        singleTapTimer.current = null;
+      }
       lastPostTap.current = 0;
       likeFromDoubleTap();
       return;
     }
     lastPostTap.current = now;
+    singleTapTimer.current = setTimeout(() => {
+      setPostDetailOpen(true);
+      singleTapTimer.current = null;
+      lastPostTap.current = 0;
+    }, 280);
   }
 
   function handlePhotoPress() {
@@ -558,32 +565,47 @@ function LogFeedCard({
     }
     lastPhotoTap.current = now;
     singleTapTimer.current = setTimeout(() => {
-      setPhotoOpen(true);
+      setPostDetailOpen(true);
       singleTapTimer.current = null;
       lastPhotoTap.current = 0;
     }, 260);
   }
 
+  function handleReactPress() {
+    if (singleTapTimer.current) {
+      clearTimeout(singleTapTimer.current);
+      singleTapTimer.current = null;
+    }
+    lastPostTap.current = 0;
+    lastPhotoTap.current = 0;
+    onReact(item.checkIn.id);
+  }
+
   return (
     <Pressable onPress={handlePostPress} style={cardStyle(theme, 11, theme.radius.lg)}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-        <ActorAvatar checkIn={item.checkIn} group={item.group} onPress={() => onUserPress(item.group.id, item.checkIn.userId)} theme={theme} />
+        <ActorAvatar checkIn={item.checkIn} onPress={() => onUserPress(item.group.id, item.checkIn.userId)} theme={theme} />
         <View style={{ flex: 1 }}>
-          <Pressable onPress={() => onUserPress(item.group.id, item.checkIn.userId)} hitSlop={6} style={({ pressed }) => ({ opacity: pressed ? 0.72 : 1 })}>
-            <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5 }}>
+            <Pressable
+              onPress={(event) => {
+                event.stopPropagation();
+                onUserPress(item.group.id, item.checkIn.userId);
+              }}
+              hitSlop={2}
+              style={({ pressed }) => ({ opacity: pressed ? 0.72 : 1 })}
+            >
               <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 15, lineHeight: 19 }}>{item.checkIn.userName}</Text>
-              <Text style={{ color: theme.colors.textSecondary, fontWeight: "800", fontSize: 15, lineHeight: 19 }}>logged a beer in</Text>
-              <GroupSummaryPill groups={item.groups} theme={theme} />
-            </View>
-          </Pressable>
+            </Pressable>
+            <Text style={{ color: theme.colors.textSecondary, fontWeight: "800", fontSize: 15, lineHeight: 19 }}>logged a beer</Text>
+          </View>
           <Text numberOfLines={1} style={{ color: theme.colors.textSecondary, marginTop: 3, fontSize: 13, lineHeight: 17 }}>{locationLabel(item.checkIn)}</Text>
           <FeedMeta
             time={item.createdAt}
             likes={item.checkIn.reactions}
             comments={item.checkIn.comments.length}
             reacted={reacted}
-            onReact={() => onReact(item.checkIn.id)}
-            onLikesPress={() => setLikersOpen(true)}
+            onReact={handleReactPress}
             onCommentsPress={() => setCommentsOpen(true)}
             theme={theme}
           />
@@ -591,8 +613,29 @@ function LogFeedCard({
         <PhotoThumb photo={photo} onPress={handlePhotoPress} onError={() => setImageFailed(true)} theme={theme} />
       </View>
       {item.checkIn.note ? <CaptionText text={item.checkIn.note} theme={theme} /> : null}
-      <PhotoViewer visible={photoOpen && Boolean(fullPhoto) && !imageFailed} photo={fullPhoto} onClose={() => setPhotoOpen(false)} theme={theme} />
-      <LikersModal visible={likersOpen} reactionUsers={reactionUsers} onUserPress={(userId) => onUserPress(item.group.id, userId)} onClose={() => setLikersOpen(false)} theme={theme} />
+      <PostDetailModal
+        visible={postDetailOpen}
+        checkIn={item.checkIn}
+        currentUserId={currentUserId}
+        photoUri={!imageFailed ? fullPhoto : undefined}
+        reacted={reacted}
+        reactionUsers={reactionUsers}
+        onReact={onReact}
+        onAddComment={onAddComment}
+        onDeleteComment={onDeleteComment}
+        onReportComment={({ comment, reason, details }) =>
+          onReportComment({
+            reportedUserId: comment.userId,
+            checkInId: item.checkIn.id,
+            groupId: item.group.id,
+            reason,
+            details
+          })
+        }
+        onUserPress={(userId) => onUserPress(item.group.id, userId)}
+        onClose={() => setPostDetailOpen(false)}
+        theme={theme}
+      />
       <CommentsSheet
         visible={commentsOpen}
         checkIn={item.checkIn}
@@ -616,13 +659,17 @@ function LogFeedCard({
   );
 }
 
-function ActorAvatar({ checkIn, group, onPress, theme }: { checkIn: BeerCheckIn; group: Group; onPress: () => void; theme: AppTheme }) {
+function ActorAvatar({ checkIn, onPress, theme }: { checkIn: BeerCheckIn; onPress: () => void; theme: AppTheme }) {
   return (
-    <Pressable onPress={onPress} hitSlop={8} style={({ pressed }) => ({ width: 42, height: 42, opacity: pressed ? 0.76 : 1 })}>
+    <Pressable
+      onPress={(event) => {
+        event.stopPropagation();
+        onPress();
+      }}
+      hitSlop={2}
+      style={({ pressed }) => ({ opacity: pressed ? 0.76 : 1 })}
+    >
       <Avatar label={checkIn.userAvatar} uri={checkIn.userAvatarUrl} size={40} borderColor={theme.colors.cardBorder} />
-      <View style={{ position: "absolute", right: -1, bottom: -1, borderRadius: 9, borderWidth: 2, borderColor: theme.colors.card, overflow: "hidden" }}>
-        <Image source={{ uri: group.backdropUrl ?? groupPhotoFor(group.name) }} style={{ width: 18, height: 18, backgroundColor: theme.colors.surfaceAlt }} resizeMode="cover" />
-      </View>
     </Pressable>
   );
 }
@@ -808,7 +855,6 @@ function FeedMeta({
   comments,
   reacted,
   onReact,
-  onLikesPress,
   onCommentsPress,
   theme
 }: {
@@ -817,7 +863,6 @@ function FeedMeta({
   comments: number;
   reacted?: boolean;
   onReact?: () => void;
-  onLikesPress?: () => void;
   onCommentsPress?: () => void;
   theme: AppTheme;
 }) {
@@ -828,47 +873,44 @@ function FeedMeta({
       <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: theme.colors.textMuted }} />
       <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
         {onReact ? (
-          <View style={{ height: 36, minWidth: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: theme.radius.pill, backgroundColor: theme.colors.card, paddingHorizontal: 11 }}>
-            <Pressable onPress={onReact} hitSlop={12}>
+          <Pressable
+            onPress={(event) => {
+              event.stopPropagation();
+              onReact();
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={reacted ? "Unlike post" : "Like post"}
+            hitSlop={10}
+            style={({ pressed }) => ({
+              height: 40,
+              minWidth: 62,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 5,
+              borderRadius: theme.radius.pill,
+              backgroundColor: theme.colors.card,
+              paddingHorizontal: 12,
+              opacity: pressed ? 0.72 : 1
+            })}
+          >
+            <View style={{ height: 40, justifyContent: "center" }}>
               <Ionicons name={reacted ? "heart" : "heart-outline"} color={likeColor} size={18} />
-            </Pressable>
-            <Pressable onPress={onLikesPress} hitSlop={12}>
+            </View>
+            <View style={{ height: 40, justifyContent: "center", minWidth: 22 }}>
               <Text style={{ color: likeColor, fontWeight: "900", fontSize: 13 }}>{likes}</Text>
-            </Pressable>
-          </View>
+            </View>
+          </Pressable>
         ) : (
-          <Pressable onPress={onLikesPress} disabled={!onLikesPress} hitSlop={12} style={{ height: 36, minWidth: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: theme.radius.pill, backgroundColor: theme.colors.card, paddingHorizontal: 11 }}>
+          <View style={{ height: 36, minWidth: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: theme.radius.pill, backgroundColor: theme.colors.card, paddingHorizontal: 11 }}>
             <Ionicons name="heart-outline" color={likeColor} size={18} />
             <Text style={{ color: likeColor, fontWeight: "900", fontSize: 13 }}>{likes}</Text>
-          </Pressable>
+          </View>
         )}
         {onCommentsPress ? <CommentButton count={comments} onPress={onCommentsPress} theme={theme} compact /> : null}
       </View>
     </View>
   );
-}
-
-function GroupSummaryPill({ groups, theme }: { groups: Group[]; theme: AppTheme }) {
-  return (
-    <View
-      style={{
-        backgroundColor: theme.mode === "light" ? "rgba(245, 158, 11, 0.18)" : "rgba(245, 158, 11, 0.22)",
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: theme.mode === "light" ? "rgba(245, 158, 11, 0.26)" : "rgba(245, 158, 11, 0.34)",
-        paddingHorizontal: 8,
-        paddingVertical: 4
-      }}
-    >
-      <Text numberOfLines={1} style={{ color: theme.colors.accent, fontWeight: "900", fontSize: 11 }}>{groupSummary(groups)}</Text>
-    </View>
-  );
-}
-
-function groupSummary(groups: Group[]) {
-  if (!groups.length) return "Group activity";
-  if (groups.length === 1) return groups[0].name;
-  return `${groups[0].name} + ${groups.length - 1} ${groups.length === 2 ? "other" : "others"}`;
 }
 
 function GroupMark({ group, theme }: { group: Group; theme: AppTheme }) {
@@ -906,10 +948,6 @@ function PhotoThumb({ photo, onPress, onError, theme }: { photo?: string; onPres
   );
 }
 
-function PhotoViewer({ visible, photo, onClose, theme }: { visible: boolean; photo?: string; onClose: () => void; theme: AppTheme }) {
-  return <ZoomablePhotoModal visible={visible} uri={photo} onClose={onClose} theme={theme} />;
-}
-
 function cardStyle(theme: AppTheme, padding = 16, radius = theme.radius.lg) {
   return {
     backgroundColor: theme.colors.card,
@@ -922,7 +960,7 @@ function cardStyle(theme: AppTheme, padding = 16, radius = theme.radius.lg) {
 }
 
 function photoFor(log: BeerCheckIn) {
-  return buildCloudflareImageUrl(log.photoCloudflareImageId, "feed") ?? log.photoUrl ?? log.photoUri ?? log.photoThumbnailUrl ?? buildCloudflareImageUrl(log.photoCloudflareImageId, "thumbnail");
+  return checkInPhotoUrl(log, "feed");
 }
 
 function locationLabel(log: BeerCheckIn) {

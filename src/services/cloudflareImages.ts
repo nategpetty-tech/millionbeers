@@ -145,19 +145,26 @@ async function recordImageMetadata(input: {
   height?: number;
 }) {
   if (!supabase) return;
-  await supabase.from("image_uploads").upsert(
-    {
-      cloudflare_image_id: input.cloudflareImageId,
-      image_type: input.imageType,
-      owner_user_id: input.ownerUserId,
-      check_in_id: input.relatedCheckInId ?? null,
-      group_id: input.relatedGroupId ?? null,
-      width: input.width ?? null,
-      height: input.height ?? null,
-      delivery_url: input.imageUrl
-    },
-    { onConflict: "cloudflare_image_id" }
-  );
+  const payload = {
+    cloudflare_image_id: input.cloudflareImageId,
+    image_type: input.imageType,
+    owner_user_id: input.ownerUserId,
+    check_in_id: input.relatedCheckInId ?? null,
+    group_id: input.relatedGroupId ?? null,
+    width: input.width ?? null,
+    height: input.height ?? null,
+    delivery_url: input.imageUrl
+  };
+  const { error } = await supabase.from("image_uploads").upsert(payload, { onConflict: "cloudflare_image_id" });
+  if (!error) return;
+
+  if (input.relatedCheckInId && error.code === "23503") {
+    const { error: orphanError } = await supabase.from("image_uploads").upsert({ ...payload, check_in_id: null }, { onConflict: "cloudflare_image_id" });
+    if (!orphanError) return;
+    throw new Error(`Image metadata sync failed: ${orphanError.message}`);
+  }
+
+  throw new Error(`Image metadata sync failed: ${error.message}`);
 }
 
 function contentTypeForUri(uri: string) {
@@ -178,7 +185,7 @@ function extensionForContentType(contentType: string) {
 }
 
 function variantForType(imageType: CloudflareImageType): CloudflareImageVariant {
-  if (imageType === "profile_avatar") return "avatar";
+  if (imageType === "profile_avatar") return "feed";
   if (imageType === "group_image") return "feed";
   return "feed";
 }

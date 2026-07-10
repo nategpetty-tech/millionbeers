@@ -1,15 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, Text, View } from "react-native";
 import { useAppTheme } from "@/theme";
-import type { BeerMapPin } from "./BeerMap.types";
+import type { BeerMapProps } from "./BeerMap.types";
 
-type Props = {
-  pins: BeerMapPin[];
-  selectedId?: string;
-  onSelect: (id: string) => void;
-};
-
-export function BeerMap({ pins, selectedId, onSelect }: Props) {
+export function BeerMap({ pins, selectedId, onSelect }: BeerMapProps) {
   const theme = useAppTheme();
 
   return (

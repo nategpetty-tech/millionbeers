@@ -11,6 +11,7 @@ import { useGroupMemberProfile } from "@/hooks/useGroupMemberProfile";
 import { AppTheme, useAppTheme } from "@/theme";
 import { GroupMemberProfile } from "@/types";
 import { formatNumber } from "@/utils/format";
+import { profileBorderDrinkerLabel, profileBorderForBeerCount, profileBorderFrameSize, profileBorderProgress } from "@/utils/profileBorders";
 
 const profileStatIcons = {
   beers: require("../../../assets/profile/stat-beer.png"),
@@ -24,6 +25,7 @@ export default function GroupMemberProfileScreen() {
   const router = useRouter();
   const { groupId, userId } = useLocalSearchParams<{ groupId?: string; userId?: string }>();
   const { data, loading, error, forbidden } = useGroupMemberProfile(groupId, userId);
+  const [selectedAvatarUri, setSelectedAvatarUri] = useState<string | null>(null);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }}>
@@ -31,9 +33,8 @@ export default function GroupMemberProfileScreen() {
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
           <View style={{ flex: 1 }}>
             <Text style={{ color: theme.colors.accent, fontSize: 12, fontWeight: "900", letterSpacing: 2 }}>PINTLY</Text>
-            <Text style={{ color: theme.colors.textPrimary, fontSize: 38, fontWeight: "900", marginTop: 6 }}>Profile</Text>
-            <Text numberOfLines={2} style={{ color: theme.colors.textSecondary, lineHeight: 21, marginTop: 6 }}>
-              Viewed from {data?.group.name ?? "this group"}.
+            <Text numberOfLines={2} style={{ color: theme.colors.textPrimary, fontSize: 38, lineHeight: 42, fontWeight: "900", marginTop: 6 }}>
+              {data?.user.displayName ?? "Profile"}
             </Text>
           </View>
           <IconButton icon="chevron-back" label="Back" onPress={() => router.back()} theme={theme} />
@@ -48,7 +49,7 @@ export default function GroupMemberProfileScreen() {
         <CenteredState icon="alert-circle-outline" title="Could not load profile" body={error} theme={theme} />
       ) : data ? (
         <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 124, gap: 24 }}>
-          <ProfileHero profile={data} theme={theme} />
+          <ProfileHero profile={data} onAvatarPress={data.user.avatarUrl ? () => setSelectedAvatarUri(data.user.avatarUrl ?? null) : undefined} theme={theme} />
           <StatsRail profile={data} theme={theme} />
           <UserSafetyActions targetUserId={data.user.id} targetName={data.user.displayName} groupId={data.group.id} theme={theme} />
           <SharedGroupsCard profile={data} theme={theme} />
@@ -58,28 +59,45 @@ export default function GroupMemberProfileScreen() {
       ) : (
         <CenteredState icon="person-circle-outline" title="Member not found" body="This person is not a member of the selected group." theme={theme} />
       )}
+      <ZoomablePhotoModal visible={Boolean(selectedAvatarUri)} uri={selectedAvatarUri} onClose={() => setSelectedAvatarUri(null)} theme={theme} footerText="Tap outside to close" />
     </SafeAreaView>
   );
 }
 
-function ProfileHero({ profile, theme }: { profile: GroupMemberProfile; theme: AppTheme }) {
-  const xpRemaining = Math.max(0, profile.level.nextLevelXp - profile.level.currentXp);
+function ProfileHero({ profile, onAvatarPress, theme }: { profile: GroupMemberProfile; onAvatarPress?: () => void; theme: AppTheme }) {
+  const hasProfileBorder = Boolean(profileBorderForBeerCount(profile.stats.allTimeBeers));
+  const avatarSize = 98;
+  const avatarSlotSize = hasProfileBorder ? profileBorderFrameSize(avatarSize) : 110;
+  const borderProgress = profileBorderProgress(profile.stats.allTimeBeers);
+  const drinkerLabel = profileBorderDrinkerLabel(profile.stats.allTimeBeers);
   return (
     <View style={cardStyle(theme, 18, 24)}>
       <View style={{ flexDirection: "row", gap: 16, alignItems: "center" }}>
-        <View style={{ width: 110, height: 110 }}>
-          <View style={{ padding: 4, borderRadius: 55, borderWidth: 3, borderColor: theme.colors.accent }}>
-            <Avatar label={profile.user.avatar} uri={profile.user.avatarUrl} size={98} borderColor={theme.colors.surface} />
-          </View>
-        </View>
+        <Pressable
+          disabled={!onAvatarPress}
+          onPress={onAvatarPress}
+          style={{ width: avatarSlotSize, height: avatarSlotSize, alignItems: "center", justifyContent: "center" }}
+        >
+          {hasProfileBorder ? (
+            <Avatar label={profile.user.avatar} uri={profile.user.avatarUrl} size={avatarSize} borderColor={theme.colors.surface} beerCount={profile.stats.allTimeBeers} />
+          ) : (
+            <View style={{ padding: 4, borderRadius: 55, borderWidth: 3, borderColor: theme.colors.accent }}>
+              <Avatar label={profile.user.avatar} uri={profile.user.avatarUrl} size={avatarSize} borderColor={theme.colors.surface} />
+            </View>
+          )}
+        </Pressable>
 
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={2} style={{ color: theme.colors.textPrimary, fontSize: 32, lineHeight: 36, fontWeight: "900" }}>
-            {profile.user.displayName}
-          </Text>
-          <View style={{ alignSelf: "flex-start", backgroundColor: theme.colors.accentSoft, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 7, marginTop: 12, maxWidth: "100%" }}>
-            <Text numberOfLines={2} style={{ color: theme.colors.accentText, fontWeight: "900", fontSize: 15, lineHeight: 18 }}>
-              {profile.level.label}
+        <View style={{ flex: 1, minWidth: 0, gap: 10 }}>
+          {profile.level.percentile ? (
+            <View style={{ alignSelf: "flex-start", backgroundColor: theme.colors.accentSoft, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 8, maxWidth: "100%" }}>
+              <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.78} style={{ color: theme.colors.accentText, fontWeight: "900", fontSize: 15 }}>
+                Top {profile.level.percentile}%
+              </Text>
+            </View>
+          ) : null}
+          <View style={{ alignSelf: "flex-start", backgroundColor: theme.colors.surfaceAlt, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.cardBorder, paddingHorizontal: 12, paddingVertical: 8, maxWidth: "100%" }}>
+            <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.78} style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 15 }}>
+              {drinkerLabel}
             </Text>
           </View>
         </View>
@@ -87,27 +105,29 @@ function ProfileHero({ profile, theme }: { profile: GroupMemberProfile; theme: A
 
       <View style={{ flexDirection: "row", gap: 10, marginTop: 18, borderTopWidth: 1, borderTopColor: theme.colors.cardBorder, paddingTop: 16 }}>
         <View style={{ flex: 1 }}>
-          <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 24 }}>{formatNumber(profile.level.points)}</Text>
-          <Text style={{ color: theme.colors.textSecondary, fontWeight: "800", fontSize: 12, marginTop: 2 }}>Total Points</Text>
+          <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 24 }}>
+            {borderProgress.nextMilestone ? formatNumber(borderProgress.nextMilestone.beers) : formatNumber(borderProgress.goal)}
+          </Text>
+          <Text style={{ color: theme.colors.textSecondary, fontWeight: "800", fontSize: 12, marginTop: 2 }}>
+            {borderProgress.nextMilestone ? "Next Border" : "Top Border"}
+          </Text>
         </View>
-        {profile.level.percentile ? (
-          <View style={{ alignItems: "flex-end" }}>
-            <Text style={{ color: theme.colors.accent, fontWeight: "900", fontSize: 24 }}>{profile.level.percentile}%</Text>
-            <Text style={{ color: theme.colors.textSecondary, fontWeight: "800", fontSize: 12, marginTop: 2 }}>of users</Text>
-          </View>
-        ) : null}
       </View>
 
       <View style={{ marginTop: 18 }}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12, marginBottom: 9 }}>
-          <Text style={{ color: theme.colors.textSecondary, fontWeight: "800" }}>XP progress</Text>
+          <Text style={{ color: theme.colors.textSecondary, fontWeight: "800" }}>
+            {borderProgress.nextMilestone ? "Border progress" : "Top profile border"}
+          </Text>
           <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>
-            {formatNumber(profile.level.currentXp)} / {formatNumber(profile.level.nextLevelXp)}
+            {formatNumber(borderProgress.current)} / {formatNumber(borderProgress.goal)} beers
           </Text>
         </View>
-        <ProgressBar current={profile.level.currentXp} goal={profile.level.nextLevelXp} color={theme.colors.accent} />
+        <ProgressBar current={borderProgress.current} goal={borderProgress.goal} color={theme.colors.accent} />
         <Text style={{ color: theme.colors.textSecondary, marginTop: 9, fontWeight: "700" }}>
-          {formatNumber(xpRemaining)} XP until Level {nextLevelNumber(profile.level.label)}
+          {borderProgress.nextMilestone
+            ? `${formatNumber(borderProgress.remaining)} beers until the ${formatNumber(borderProgress.nextMilestone.beers)} beer border`
+            : `${formatNumber(borderProgress.goal)} beer border unlocked`}
         </Text>
       </View>
     </View>
@@ -323,10 +343,6 @@ function cardStyle(theme: AppTheme, padding = 16, radius = theme.radius.lg) {
   };
 }
 
-function nextLevelNumber(label: string) {
-  const match = label.match(/Level\s+(\d+)/i);
-  return match ? Number(match[1]) + 1 : 2;
-}
 
 function ordinal(value: number) {
   const suffix = value % 10 === 1 && value % 100 !== 11 ? "st" : value % 10 === 2 && value % 100 !== 12 ? "nd" : value % 10 === 3 && value % 100 !== 13 ? "rd" : "th";

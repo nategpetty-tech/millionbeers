@@ -71,11 +71,20 @@ Deno.serve(async (request) => {
   const groupIds = Array.from(new Set((groupLinks ?? []).map((link: { group_id: string }) => link.group_id)));
   if (!groupIds.length) return json({ ok: true, sent: 0 });
 
-  const { data: memberships, error: membershipError } = await serviceClient
+  const { data: membershipRows, error: membershipError } = await serviceClient
     .from("group_memberships")
     .select("user_id,notifications_enabled")
     .in("group_id", groupIds);
-  if (membershipError) return json({ error: "Could not load group members." }, 500);
+  let memberships = membershipRows ?? [];
+  if (membershipError) {
+    console.warn("Falling back while loading group notification preferences", membershipError);
+    const { data: fallbackMembershipRows, error: fallbackMembershipError } = await serviceClient
+      .from("group_memberships")
+      .select("user_id")
+      .in("group_id", groupIds);
+    if (fallbackMembershipError) return json({ error: "Could not load group members." }, 500);
+    memberships = fallbackMembershipRows ?? [];
+  }
 
   const recipientIds = Array.from(
     new Set(
@@ -121,7 +130,15 @@ Deno.serve(async (request) => {
       },
       body: JSON.stringify(chunk)
     });
-    if (response.ok) sent += chunk.length;
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      console.warn("Expo push request failed", response.status, payload);
+      continue;
+    }
+    const tickets = Array.isArray(payload?.data) ? payload.data : [];
+    sent += tickets.filter((ticket: { status?: string }) => ticket.status === "ok").length;
+    const failedTickets = tickets.filter((ticket: { status?: string }) => ticket.status === "error");
+    if (failedTickets.length) console.warn("Expo push ticket errors", failedTickets);
   }
 
   return json({ ok: true, sent });

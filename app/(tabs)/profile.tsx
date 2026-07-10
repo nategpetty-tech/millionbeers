@@ -1,5 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
+import Constants from "expo-constants";
 import { useRouter } from "expo-router";
+import * as Updates from "expo-updates";
 import { useMemo, useRef, useState } from "react";
 import { Alert, Image, type ImageSourcePropType, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -10,12 +12,13 @@ import { ProgressBar } from "@/components/ProgressBar";
 import { ProfileModal } from "@/components/ProfileModal";
 import { SectionTitle } from "@/components/SectionTitle";
 import { ZoomablePhotoModal } from "@/components/ZoomablePhotoModal";
-import { buildCloudflareImageUrl } from "@/services/photoStorage";
 import { useAuth } from "@/store/authStore";
 import { usePassport } from "@/store/passportStore";
 import { AppTheme, ThemePreference, theme as staticTheme, useThemePreference } from "@/theme";
 import { Badge, BeerCheckIn, Challenge } from "@/types";
-import { formatNumber } from "@/utils/format";
+import { broadPlaceLabel, formatNumber } from "@/utils/format";
+import { checkInPhotoUrl } from "@/utils/photoUrls";
+import { profileBorderDrinkerLabel, profileBorderForBeerCount, profileBorderFrameSize, profileBorderProgress } from "@/utils/profileBorders";
 
 type Memory = {
   id: string;
@@ -34,16 +37,24 @@ const profileStatIcons = {
   badges: require("../../assets/profile/stat-badges.png")
 } satisfies Record<string, ImageSourcePropType>;
 
+type AppDiagnostic = {
+  label: string;
+  value: string;
+};
+
 export default function ProfileScreen() {
   const [profileOpen, setProfileOpen] = useState(false);
+  const [profileInitialFocus, setProfileInitialFocus] = useState<"favoriteBeer" | undefined>();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedStamp, setSelectedStamp] = useState<Challenge | null>(null);
   const [selectedMemory, setSelectedMemory] = useState<Memory | null>(null);
+  const [selectedAvatarUri, setSelectedAvatarUri] = useState<string | null>(null);
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
   const scrollViewRef = useRef<ScrollView>(null);
   const router = useRouter();
   const memoryYById = useRef(new Map<string, number>());
   const recentMemoriesY = useRef(0);
-  const { profile, signOut } = useAuth();
+  const { signOut } = useAuth();
   const { preference, setPreference, theme } = useThemePreference();
   const { user, groups, checkIns, challenges, badges, globalUserRank, initializeSeedData, deleteAccount } = usePassport();
   const personalLogs = useMemo(
@@ -57,7 +68,6 @@ export default function ProfileScreen() {
   const completedStamps = challenges.filter((challenge) => challenge.current >= challenge.goal);
   const activeChallenges = challenges.filter((challenge) => challenge.current < challenge.goal);
   const monthSummary = getMonthSummary(monthLogs);
-  const totalPoints = getTotalPoints(user.level, user.xp, user.xpGoal);
   const topPercent = globalUserRank?.topPercent ?? getTopUserPercentile(memberGroups, user.id, user.totalBeers);
 
   function openMemoryFromCalendar(date: Date) {
@@ -69,6 +79,21 @@ export default function ProfileScreen() {
     setTimeout(() => setSelectedMemory(memory), 260);
   }
 
+  function handleDeleteAccount() {
+    Alert.alert("Delete account?", "This permanently deletes your Pintly account. Your group contributions may remain as anonymized totals.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete account",
+        style: "destructive",
+        onPress: () => {
+          void deleteAccount()
+            .then(() => signOut())
+            .catch(() => Alert.alert("Could not delete account", "Try again in a moment or contact support."));
+        }
+      }
+    ]);
+  }
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <ScrollView ref={scrollViewRef} contentContainerStyle={{ paddingBottom: 124 }}>
@@ -76,12 +101,21 @@ export default function ProfileScreen() {
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
             <View style={{ flex: 1 }}>
               <Text style={{ color: theme.colors.accent, fontSize: 12, fontWeight: "900", letterSpacing: 2 }}>PINTLY</Text>
-              <Text style={{ color: theme.colors.textPrimary, fontSize: 38, fontWeight: "900", marginTop: 6 }}>Profile</Text>
-              <Text style={{ color: theme.colors.textSecondary, lineHeight: 21, marginTop: 6 }}>Your Pintly stats, badges, and beer memories.</Text>
+              <Text numberOfLines={2} style={{ color: theme.colors.textPrimary, fontSize: 38, lineHeight: 42, fontWeight: "900", marginTop: 6 }}>
+                {user.name || "Pintly User"}
+              </Text>
             </View>
             <View style={{ flexDirection: "row", gap: 8 }}>
-              <IconButton icon="create-outline" label="Edit profile" onPress={() => setProfileOpen(true)} theme={theme} />
-              <IconButton icon="settings-outline" label="Profile settings" onPress={() => scrollViewRef.current?.scrollToEnd({ animated: true })} theme={theme} />
+              <IconButton
+                icon="create-outline"
+                label="Edit profile"
+                onPress={() => {
+                  setProfileInitialFocus(undefined);
+                  setProfileOpen(true);
+                }}
+                theme={theme}
+              />
+              <IconButton icon="settings-outline" label="Profile settings" onPress={() => setSettingsOpen(true)} theme={theme} />
             </View>
           </View>
         </View>
@@ -89,10 +123,12 @@ export default function ProfileScreen() {
         <View style={{ paddingHorizontal: 20, gap: 24 }}>
           <IdentityCard
             user={user}
-            email={profile?.email}
-            totalPoints={totalPoints}
             topPercent={topPercent}
-            onEdit={() => setProfileOpen(true)}
+            onAvatarPress={user.avatarUrl ? () => setSelectedAvatarUri(user.avatarUrl ?? null) : undefined}
+            onFavoriteBeerPress={() => {
+              setProfileInitialFocus("favoriteBeer");
+              setProfileOpen(true);
+            }}
             theme={theme}
           />
 
@@ -183,104 +219,156 @@ export default function ProfileScreen() {
               </View>
             ))}
           </View>
-
-          <SettingsStack
-            preference={preference}
-            setPreference={setPreference}
-            onRefresh={() => void initializeSeedData()}
-            onSignOut={() => void signOut()}
-            onOpenPrivacy={() => router.push("/legal/privacy")}
-            onOpenTerms={() => router.push("/legal/terms")}
-            onDeleteAccount={() => {
-              Alert.alert("Delete account?", "This permanently deletes your Pintly account. Your group contributions may remain as anonymized totals.", [
-                { text: "Cancel", style: "cancel" },
-                {
-                  text: "Delete account",
-                  style: "destructive",
-                  onPress: () => {
-                    void deleteAccount()
-                      .then(() => signOut())
-                      .catch(() => Alert.alert("Could not delete account", "Try again in a moment or contact support."));
-                  }
-                }
-              ]);
-            }}
-            theme={theme}
-          />
         </View>
       </ScrollView>
 
-      <ProfileModal visible={profileOpen} onClose={() => setProfileOpen(false)} />
+      <ProfileModal
+        visible={profileOpen}
+        initialFocus={profileInitialFocus}
+        onClose={() => {
+          setProfileOpen(false);
+          setProfileInitialFocus(undefined);
+        }}
+      />
+      <SettingsModal
+        visible={settingsOpen}
+        preference={preference}
+        setPreference={setPreference}
+        onClose={() => setSettingsOpen(false)}
+        onRefresh={() => void initializeSeedData()}
+        onSignOut={() => {
+          setSettingsOpen(false);
+          void signOut();
+        }}
+        onOpenPrivacy={() => {
+          setSettingsOpen(false);
+          router.push("/legal/privacy");
+        }}
+        onOpenTerms={() => {
+          setSettingsOpen(false);
+          router.push("/legal/terms");
+        }}
+        onDeleteAccount={handleDeleteAccount}
+        theme={theme}
+      />
       <ChallengeStampModal
         challenge={selectedStamp}
         badge={selectedStamp ? badges.find((badge) => badge.id === selectedStamp.rewardBadgeId) : undefined}
         onClose={() => setSelectedStamp(null)}
       />
       <MemoryDetailModal memory={selectedMemory} onClose={() => setSelectedMemory(null)} theme={theme} />
+      <ZoomablePhotoModal visible={Boolean(selectedAvatarUri)} uri={selectedAvatarUri} onClose={() => setSelectedAvatarUri(null)} theme={theme} footerText="Tap outside to close" />
     </SafeAreaView>
   );
 }
 
 function IdentityCard({
   user,
-  email,
-  totalPoints,
   topPercent,
-  onEdit,
+  onAvatarPress,
+  onFavoriteBeerPress,
   theme
 }: {
   user: ReturnType<typeof usePassport>["user"];
-  email?: string;
-  totalPoints: number;
   topPercent: number;
-  onEdit: () => void;
+  onAvatarPress?: () => void;
+  onFavoriteBeerPress: () => void;
   theme: AppTheme;
 }) {
+  const hasProfileBorder = Boolean(profileBorderForBeerCount(user.totalBeers));
+  const avatarSize = 86;
+  const avatarSlotSize = hasProfileBorder ? profileBorderFrameSize(avatarSize) : avatarSize + 6;
+  const borderProgress = profileBorderProgress(user.totalBeers);
+  const drinkerLabel = profileBorderDrinkerLabel(user.totalBeers);
+  const favoriteBeer = user.favoriteBeer?.trim();
   return (
     <View style={{ paddingVertical: 6 }}>
       <View style={{ flexDirection: "row", gap: 16, alignItems: "center" }}>
-        <View style={{ padding: 3, borderRadius: 999, borderWidth: 2, borderColor: theme.colors.accent }}>
-          <Avatar label={user.avatar} uri={user.avatarUrl} size={86} borderColor={theme.colors.surface} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: theme.colors.textPrimary, fontSize: 28, fontWeight: "900" }}>{user.name || "Pintly User"}</Text>
-          {email ? <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>{email}</Text> : null}
-          <View
+        <Pressable
+          disabled={!onAvatarPress}
+          onPress={onAvatarPress}
+          style={{ width: avatarSlotSize, height: avatarSlotSize, alignItems: "center", justifyContent: "center" }}
+        >
+          {hasProfileBorder ? (
+            <Avatar label={user.avatar} uri={user.avatarUrl} size={avatarSize} borderColor={theme.colors.surface} beerCount={user.totalBeers} />
+          ) : (
+            <View style={{ padding: 3, borderRadius: 999, borderWidth: 2, borderColor: theme.colors.accent }}>
+              <Avatar label={user.avatar} uri={user.avatarUrl} size={avatarSize} borderColor={theme.colors.surface} />
+            </View>
+          )}
+        </Pressable>
+        <View style={{ flex: 1, minWidth: 0, gap: 12 }}>
+          <Pressable
+            onPress={onFavoriteBeerPress}
             style={{
-              alignSelf: "flex-start",
-              backgroundColor: theme.colors.accentSoft,
-              borderRadius: theme.radius.pill,
-              paddingHorizontal: 10,
-              paddingVertical: 6,
-              marginTop: 10
+              minHeight: 58,
+              justifyContent: "center",
+              borderRadius: theme.radius.md,
+              borderWidth: favoriteBeer ? 0 : 1,
+              borderColor: theme.colors.cardBorder,
+              backgroundColor: favoriteBeer ? "transparent" : theme.colors.surfaceAlt,
+              paddingHorizontal: favoriteBeer ? 0 : 11,
+              paddingVertical: favoriteBeer ? 0 : 9
             }}
           >
-            <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.78} style={{ color: theme.colors.accentText, fontWeight: "900", fontSize: 11 }}>
-              Level {user.level} Pintly Collector
-            </Text>
+            <Text style={{ color: theme.colors.textMuted, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.7 }}>Favorite Beer</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 3 }}>
+              {!favoriteBeer ? <Ionicons name="add-circle" color={theme.colors.accent} size={20} /> : null}
+              <Text numberOfLines={2} style={{ flex: 1, color: favoriteBeer ? theme.colors.textPrimary : theme.colors.accent, fontSize: 19, lineHeight: 23, fontWeight: "900" }}>
+                {favoriteBeer || "Add favorite beer"}
+              </Text>
+            </View>
+          </Pressable>
+          <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+            <View
+              style={{
+                backgroundColor: theme.colors.accentSoft,
+                borderRadius: theme.radius.pill,
+                paddingHorizontal: 11,
+                paddingVertical: 7,
+                flexShrink: 1
+              }}
+            >
+              <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.78} style={{ color: theme.colors.accentText, fontWeight: "900", fontSize: 14 }}>
+                Top {topPercent}%
+              </Text>
+            </View>
+            <View
+              style={{
+                backgroundColor: theme.colors.surfaceAlt,
+                borderRadius: theme.radius.pill,
+                borderWidth: 1,
+                borderColor: theme.colors.cardBorder,
+                paddingHorizontal: 11,
+                paddingVertical: 7,
+                flexShrink: 1
+              }}
+            >
+              <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.78} style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 14 }}>
+                {drinkerLabel}
+              </Text>
+            </View>
           </View>
-        </View>
-        <View style={{ alignItems: "flex-end", minWidth: 78 }}>
-          <Text style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 24 }}>{formatNumber(totalPoints)}</Text>
-          <Text style={{ color: theme.colors.textSecondary, fontWeight: "800", fontSize: 12, marginTop: 2 }}>Total Points</Text>
-          <Text style={{ color: theme.colors.accent, fontWeight: "900", fontSize: 18, marginTop: 12 }}>Top {topPercent}%</Text>
-          <Text style={{ color: theme.colors.textSecondary, fontWeight: "800", fontSize: 12, marginTop: 2 }}>of users</Text>
         </View>
       </View>
 
       <View style={{ marginTop: 18 }}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
-          <Text style={{ color: theme.colors.textSecondary, fontWeight: "800" }}>XP progress</Text>
+          <Text style={{ color: theme.colors.textSecondary, fontWeight: "800" }}>
+            {borderProgress.nextMilestone ? "Next profile border" : "Top profile border"}
+          </Text>
           <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>
-            {user.xp} / {user.xpGoal}
+            {formatNumber(borderProgress.current)} / {formatNumber(borderProgress.goal)} beers
           </Text>
         </View>
-        <ProgressBar current={user.xp} goal={user.xpGoal} color={theme.colors.accent} />
+        <ProgressBar current={borderProgress.current} goal={borderProgress.goal} color={theme.colors.accent} />
+        <Text style={{ color: theme.colors.textSecondary, marginTop: 8, fontWeight: "700" }}>
+          {borderProgress.nextMilestone
+            ? `${formatNumber(borderProgress.remaining)} beers until the ${formatNumber(borderProgress.nextMilestone.beers)} beer border`
+            : `${formatNumber(borderProgress.goal)} beer border unlocked`}
+        </Text>
       </View>
 
-      <Pressable onPress={onEdit} hitSlop={8} style={{ position: "absolute", left: 68, top: 76, width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.accent, borderWidth: 2, borderColor: theme.colors.background }}>
-        <Ionicons name="camera-outline" color={theme.colors.textOnPrimary} size={18} />
-      </Pressable>
     </View>
   );
 }
@@ -520,6 +608,68 @@ function MemoryDetailModal({ memory, onClose, theme }: { memory: Memory | null; 
   );
 }
 
+function SettingsModal({
+  visible,
+  preference,
+  setPreference,
+  onRefresh,
+  onSignOut,
+  onOpenPrivacy,
+  onOpenTerms,
+  onDeleteAccount,
+  onClose,
+  theme
+}: {
+  visible: boolean;
+  preference: ThemePreference;
+  setPreference: (preference: ThemePreference) => void;
+  onRefresh: () => void;
+  onSignOut: () => void;
+  onOpenPrivacy: () => void;
+  onOpenTerms: () => void;
+  onDeleteAccount: () => void;
+  onClose: () => void;
+  theme: AppTheme;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+      <View style={{ flex: 1, justifyContent: "flex-end", backgroundColor: theme.colors.modalBackdrop }}>
+        <View
+          style={{
+            height: "90%",
+            backgroundColor: theme.colors.background,
+            borderTopLeftRadius: 28,
+            borderTopRightRadius: 28,
+            borderWidth: 1,
+            borderColor: theme.colors.cardBorder,
+            overflow: "hidden"
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 16, paddingHorizontal: 22, paddingTop: 18, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: theme.colors.cardBorder }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: theme.colors.textPrimary, fontSize: 24, fontWeight: "900" }}>Settings</Text>
+              <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>Appearance, legal, account, and app diagnostics.</Text>
+            </View>
+            <IconButton icon="close" label="Close settings" onPress={onClose} theme={theme} />
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 34 }}>
+            <SettingsStack
+              preference={preference}
+              setPreference={setPreference}
+              onRefresh={onRefresh}
+              onSignOut={onSignOut}
+              onOpenPrivacy={onOpenPrivacy}
+              onOpenTerms={onOpenTerms}
+              onDeleteAccount={onDeleteAccount}
+              theme={theme}
+            />
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 function SettingsStack({
   preference,
   setPreference,
@@ -539,9 +689,10 @@ function SettingsStack({
   onDeleteAccount: () => void;
   theme: AppTheme;
 }) {
+  const diagnostics = useMemo(buildAppDiagnostics, []);
+
   return (
     <View style={{ gap: 12 }}>
-      <SectionTitle title="Settings" detail="Appearance, privacy, and account controls." />
       <View style={cardStyle(theme, 16, theme.radius.lg)}>
         <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>Appearance</Text>
         <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
@@ -576,6 +727,7 @@ function SettingsStack({
         <SettingsRow label="Privacy Policy" icon="lock-closed-outline" onPress={onOpenPrivacy} theme={theme} />
         <SettingsRow label="Terms of Service" icon="document-text-outline" onPress={onOpenTerms} theme={theme} />
       </View>
+      <AppDiagnosticsCard diagnostics={diagnostics} theme={theme} />
       <View style={{ flexDirection: "row", gap: 10 }}>
         <Pressable onPress={onRefresh} style={[secondaryButton(theme), { flex: 1 }]}>
           <Text style={{ color: theme.colors.textSecondary, fontWeight: "900" }}>Refresh data</Text>
@@ -587,6 +739,30 @@ function SettingsStack({
       <Pressable onPress={onDeleteAccount} style={[secondaryButton(theme), { borderColor: theme.colors.danger }]}>
         <Text style={{ color: theme.colors.danger, fontWeight: "900", textAlign: "center" }}>Delete account</Text>
       </Pressable>
+    </View>
+  );
+}
+
+function AppDiagnosticsCard({ diagnostics, theme }: { diagnostics: AppDiagnostic[]; theme: AppTheme }) {
+  return (
+    <View style={cardStyle(theme, 16, theme.radius.lg)}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 9 }}>
+        <Ionicons name="information-circle-outline" color={theme.colors.primary} size={20} />
+        <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>App diagnostics</Text>
+      </View>
+      <Text style={{ color: theme.colors.textSecondary, marginTop: 6, lineHeight: 19, fontSize: 12 }}>
+        Use this when checking whether your phone has the latest update.
+      </Text>
+      <View style={{ marginTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.cardBorder }}>
+        {diagnostics.map((item) => (
+          <View key={item.label} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.cardBorder }}>
+            <Text style={{ color: theme.colors.textMuted, fontSize: 11, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.6 }}>{item.label}</Text>
+            <Text selectable style={{ color: theme.colors.textPrimary, marginTop: 4, fontWeight: "800", lineHeight: 19 }}>
+              {item.value}
+            </Text>
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
@@ -605,6 +781,23 @@ const appearanceOptions: Array<{ label: string; value: ThemePreference }> = [
   { label: "Light", value: "light" },
   { label: "Dark", value: "dark" }
 ];
+
+function buildAppDiagnostics(): AppDiagnostic[] {
+  const appVersion = Constants.expoConfig?.version ?? "unknown";
+  const iosBuildNumber = Constants.platform?.ios?.buildNumber;
+  const androidVersionCode = Constants.platform?.android?.versionCode;
+  const nativeBuild = iosBuildNumber ?? (typeof androidVersionCode === "number" ? String(androidVersionCode) : undefined);
+  return [
+    { label: "App version", value: nativeBuild ? `${appVersion} (${nativeBuild})` : appVersion },
+    { label: "Runtime", value: Updates.runtimeVersion ?? Constants.expoRuntimeVersion ?? "unknown" },
+    { label: "Channel", value: Updates.channel ?? "not set" },
+    { label: "Update ID", value: Updates.updateId ?? "embedded / development" },
+    { label: "Update created", value: Updates.createdAt ? Updates.createdAt.toISOString() : "unknown" },
+    { label: "Launch source", value: Updates.isEmbeddedLaunch ? "embedded build" : "OTA update" },
+    { label: "Updates enabled", value: Updates.isEnabled ? "yes" : "no" },
+    { label: "Emergency launch", value: Updates.isEmergencyLaunch ? Updates.emergencyLaunchReason ?? "yes" : "no" }
+  ];
+}
 
 function buildMemories(logs: BeerCheckIn[]): Memory[] {
   const byDay = new Map<string, BeerCheckIn[]>();
@@ -639,10 +832,6 @@ function getMonthSummary(logs: BeerCheckIn[]) {
   };
 }
 
-function getTotalPoints(level: number, xp: number, xpGoal: number) {
-  return Math.max(0, level - 1) * xpGoal + xp;
-}
-
 function getTopUserPercentile(groups: ReturnType<typeof usePassport>["groups"], userId: string, fallbackBeerCount: number) {
   const beerCountByUser = new Map<string, number>([[userId, fallbackBeerCount]]);
   groups.forEach((group) => {
@@ -667,7 +856,8 @@ function stampLocationKey(log: BeerCheckIn) {
   if (typeof log.location.latitude === "number" && typeof log.location.longitude === "number") {
     return `${log.location.latitude.toFixed(4)},${log.location.longitude.toFixed(4)}`;
   }
-  return normalizePlaceText([log.location.city, log.location.state, log.location.country].filter(Boolean).join(", ") || "unknown");
+  const label = broadPlaceLabel(log.location);
+  return label === "Location hidden" ? "" : normalizePlaceText(label);
 }
 
 function logsForMonth(logs: BeerCheckIn[], month: Date) {
@@ -678,14 +868,13 @@ function logsForMonth(logs: BeerCheckIn[], month: Date) {
 }
 
 function photoFor(log: BeerCheckIn) {
-  return buildCloudflareImageUrl(log.photoCloudflareImageId, "feed") ?? log.photoUrl ?? log.photoUri ?? log.photoThumbnailUrl ?? buildCloudflareImageUrl(log.photoCloudflareImageId, "thumbnail");
+  return checkInPhotoUrl(log, "feed");
 }
 
 function locationLabel(log: BeerCheckIn) {
   const brewery = log.brewery?.trim();
   if (brewery && !isGenericPlaceLabel(brewery)) return brewery;
-  const cityState = [log.location.city, log.location.state].filter(Boolean).join(", ");
-  return cityState || "Unknown location";
+  return broadPlaceLabel(log.location);
 }
 
 function isGenericPlaceLabel(value: string) {
@@ -704,7 +893,7 @@ function memoryTitle(logs: BeerCheckIn[], date: Date) {
 }
 
 function cleanBeerTitle(log: BeerCheckIn) {
-  return ["photo stamp", "beer log"].includes(log.beerName.trim().toLowerCase()) ? "Beer Memory" : log.beerName;
+  return isGenericPlaceLabel(log.beerName) ? "Beer Memory" : log.beerName;
 }
 
 function unique(values: string[]) {

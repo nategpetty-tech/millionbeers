@@ -24,9 +24,15 @@ const fallbackLocationLookupTimeoutMs = 3500;
 const venueLookupTimeoutMs = 9000;
 const maxLastKnownLocationAgeMs = 1000 * 60 * 5;
 const maxLastKnownLocationAccuracyMeters = 250;
+const unresolvedLocationCity = "Current location";
 
 type VenueLookupStatus = "idle" | "loading" | "suggested" | "confirmed" | "skipped" | "unavailable" | "error";
 type VenueUnavailableReason = "permission" | "no_venues" | "lookup";
+type ResolvedStampLocation = {
+  city: string;
+  state?: string;
+  country?: string;
+};
 
 export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds }: Props) {
   const { checkInBeer, groups, user } = usePassport();
@@ -50,8 +56,10 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
   const [venuePickerOpen, setVenuePickerOpen] = useState(false);
   const [venueUnavailableReason, setVenueUnavailableReason] = useState<VenueUnavailableReason | null>(null);
   const cameraLaunchedForSession = useRef(false);
+  const submittingRef = useRef(false);
   const venueSearchId = useRef(0);
-  const canSubmit = uploadStatus !== "uploading" && !cameraOpening && Boolean(photoUri);
+  const [submitting, setSubmitting] = useState(false);
+  const canSubmit = uploadStatus !== "uploading" && !cameraOpening && !submitting && Boolean(photoUri);
 
   function automaticGroupIds() {
     const memberGroupIds = groups.filter((group) => group.members.some((member) => member.userId === user.id)).map((group) => group.id);
@@ -87,18 +95,21 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
     setCoordinates(undefined);
     setUploadStatus("idle");
     setCameraOpening(false);
+    submittingRef.current = false;
+    setSubmitting(false);
     setPhotoMessage("");
     setSelectedGroups(automaticGroupIds());
     resetVenueSelection();
   }
 
   function closeModal() {
+    if (submittingRef.current) return;
     reset();
     onClose();
   }
 
   async function openCamera() {
-    if (cameraOpening) return;
+    if (cameraOpening || submitting) return;
     try {
       setCameraOpening(true);
       setPhotoMessage("");
@@ -127,7 +138,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
   }
 
   async function openLibrary() {
-    if (cameraOpening) return;
+    if (cameraOpening || submitting) return;
     try {
       setCameraOpening(true);
       setPhotoMessage("");
@@ -257,7 +268,8 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
     try {
       const places = await Location.reverseGeocodeAsync(nextCoordinates);
       const place = places[0];
-      if (place?.city) setCity((current) => current || place.city || "");
+      const resolvedCity = cityFromGeocodePlace(place);
+      if (resolvedCity) setCity((current) => current || resolvedCity);
       if (place?.region) setState((current) => current || place.region || "");
       if (place?.country) setCountry((current) => current || place.country || "");
     } catch {
@@ -265,20 +277,71 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
     }
   }
 
-  function confirmVenue(venue: VenueCandidate) {
-    setConfirmedVenue(venue);
-    setSuggestedVenue(venue);
-    setVenueSelectionStatus("confirmed");
-    setUserExplicitlySkippedVenue(false);
-    setVenueUnavailableReason(null);
-    setVenueStatus("confirmed");
-    setVenuePickerOpen(false);
+  async function resolveStampLocation(venue?: VenueCandidate): Promise<ResolvedStampLocation> {
+    const venueCity = cleanPlacePart(venue?.city);
+    const currentCity = cleanPlacePart(city);
+    const venueState = cleanPlacePart(venue?.state);
+    const currentState = cleanPlacePart(state);
+    const venueCountry = cleanPlacePart(venue?.country);
+    const currentCountry = cleanPlacePart(country);
+
+    if (venueCity) {
+      return {
+        city: venueCity,
+        state: venueState ?? currentState,
+        country: venueCountry ?? currentCountry
+      };
+    }
+
+    if (currentCity) {
+      return {
+        city: currentCity,
+        state: currentState ?? venueState,
+        country: currentCountry ?? venueCountry
+      };
+    }
+
+    if (coordinates) {
+      const reverseGeocodedLocation = await reverseGeocodeStampLocation(coordinates);
+      if (reverseGeocodedLocation?.city) {
+        setCity((existing) => existing || reverseGeocodedLocation.city);
+        if (reverseGeocodedLocation.state) setState((existing) => existing || reverseGeocodedLocation.state || "");
+        if (reverseGeocodedLocation.country) setCountry((existing) => existing || reverseGeocodedLocation.country || "");
+        return {
+          city: reverseGeocodedLocation.city,
+          state: reverseGeocodedLocation.state ?? venueState ?? currentState,
+          country: reverseGeocodedLocation.country ?? venueCountry ?? currentCountry
+        };
+      }
+    }
+
+    return {
+      city: venueState ?? currentState ?? venueCountry ?? currentCountry ?? unresolvedLocationCity,
+      state: venueState ?? currentState,
+      country: venueCountry ?? currentCountry
+    };
+  }
+
+  async function reverseGeocodeStampLocation(nextCoordinates: { latitude: number; longitude: number }): Promise<ResolvedStampLocation | null> {
+    try {
+      const places = await Location.reverseGeocodeAsync(nextCoordinates);
+      const place = places[0];
+      const resolvedCity = cityFromGeocodePlace(place);
+      if (!resolvedCity) return null;
+      return {
+        city: resolvedCity,
+        state: cleanPlacePart(place?.region),
+        country: cleanPlacePart(place?.country)
+      };
+    } catch {
+      return null;
+    }
   }
 
   function selectChangedVenue(venue: VenueCandidate) {
     setConfirmedVenue(venue);
     setSuggestedVenue((current) => current ?? venue);
-    setVenueSelectionStatus(suggestedVenue && sameVenue(venue, suggestedVenue) ? "confirmed" : "changed");
+    setVenueSelectionStatus(!suggestedVenue || sameVenue(venue, suggestedVenue) ? "confirmed" : "changed");
     setUserExplicitlySkippedVenue(false);
     setVenueUnavailableReason(null);
     setVenueStatus("confirmed");
@@ -295,6 +358,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
   }
 
   async function submit() {
+    if (submittingRef.current) return;
     if (!photoUri) {
       Alert.alert("Photo required", "Take a photo first so this stamp has an image attached.");
       return;
@@ -305,54 +369,67 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
       return;
     }
 
+    submittingRef.current = true;
+    setSubmitting(true);
     const localPhotoUri = photoUri;
-    const stampCity = city.trim() || "Unknown";
-    const finalVenue = finalVenueSelection({
-      confirmedVenue,
-      venueSelectionStatus,
-      venueStatus,
-      userExplicitlySkippedVenue,
-      venueUnavailableReason
-    });
-    const result = checkInBeer({
-      beerName: "Beer log",
-      quantity: 1,
-      brewery: finalVenue.venue?.name ?? (stampCity === "Unknown" ? "Pintly log" : `Pintly log - ${stampCity}`),
-      city: stampCity,
-      state,
-      country,
-      note,
-      groupIds: selectedGroups,
-      photoUri: localPhotoUri,
-      photoSyncStatus: "queued",
-      countSource: "manual",
-      latitude: coordinates?.latitude,
-      longitude: coordinates?.longitude,
-      venue: finalVenue.venue,
-      venueProvider: finalVenue.provider,
-      venueConfirmed: finalVenue.confirmed,
-      venueConfirmationStatus: finalVenue.confirmationStatus,
-      venueSelectionStatus: finalVenue.selectionStatus
-    });
-    void enqueuePhotoUpload({
-      checkInId: result.checkIn.id,
-      localUri: localPhotoUri,
-      userId: user.id,
-      width: photoSize?.width,
-      height: photoSize?.height,
-      groupIds: selectedGroups
-    });
-    if (result.completedChallenges.length) {
-      const challengeNames = result.completedChallenges.map((challenge) => challenge.title).join(", ");
-      const badgeNames = result.unlockedBadges.map((badge) => badge.title).join(", ");
-      Alert.alert(
-        "Challenge completed",
-        `${challengeNames}${badgeNames ? `\n\nBadge unlocked: ${badgeNames}` : ""}`
-      );
-    } else {
-      Alert.alert("Stamped", "1 beer added to Pintly. The photo will finish syncing in the background.");
+    try {
+      const finalVenue = finalVenueSelection({
+        confirmedVenue,
+        venueSelectionStatus,
+        venueStatus,
+        userExplicitlySkippedVenue,
+        venueUnavailableReason
+      });
+      const stampLocation = await resolveStampLocation(finalVenue.venue);
+      const stampCity = stampLocation.city;
+      const result = checkInBeer({
+        beerName: "Beer log",
+        quantity: 1,
+        brewery: finalVenue.venue?.name ?? `Pintly log - ${stampCity}`,
+        city: stampCity,
+        state: stampLocation.state,
+        country: stampLocation.country,
+        note,
+        groupIds: selectedGroups,
+        photoUri: localPhotoUri,
+        photoImageWidth: photoSize?.width,
+        photoImageHeight: photoSize?.height,
+        photoSyncStatus: "queued",
+        countSource: "manual",
+        latitude: coordinates?.latitude,
+        longitude: coordinates?.longitude,
+        venue: finalVenue.venue,
+        venueProvider: finalVenue.provider,
+        venueConfirmed: finalVenue.confirmed,
+        venueConfirmationStatus: finalVenue.confirmationStatus,
+        venueSelectionStatus: finalVenue.selectionStatus
+      });
+      void enqueuePhotoUpload({
+        checkInId: result.checkIn.id,
+        localUri: localPhotoUri,
+        userId: user.id,
+        width: photoSize?.width,
+        height: photoSize?.height,
+        groupIds: selectedGroups
+      });
+      if (result.completedChallenges.length) {
+        const challengeNames = result.completedChallenges.map((challenge) => challenge.title).join(", ");
+        const badgeNames = result.unlockedBadges.map((badge) => badge.title).join(", ");
+        Alert.alert(
+          "Challenge completed",
+          `${challengeNames}${badgeNames ? `\n\nBadge unlocked: ${badgeNames}` : ""}`
+        );
+      } else {
+        Alert.alert("Stamped", "1 beer added to Pintly. The photo will finish syncing in the background.");
+      }
+      submittingRef.current = false;
+      setSubmitting(false);
+      closeModal();
+    } catch {
+      submittingRef.current = false;
+      setSubmitting(false);
+      Alert.alert("Could not stamp beer", "Try again in a moment.");
     }
-    closeModal();
   }
 
   return (
@@ -363,7 +440,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
             <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: "900", letterSpacing: 2 }}>QUICK STAMP</Text>
             <Text style={{ color: theme.colors.textPrimary, fontSize: 28, fontWeight: "900", fontFamily: "Georgia" }}>Log a Beer</Text>
           </View>
-          <Pressable onPress={closeModal} style={{ padding: 8 }}>
+          <Pressable onPress={closeModal} disabled={submitting} accessibilityRole="button" accessibilityLabel="Close beer log" style={{ padding: 8, opacity: submitting ? 0.45 : 1 }}>
             <Ionicons name="close" color={theme.colors.textPrimary} size={28} />
           </Pressable>
         </View>
@@ -431,9 +508,10 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
             status={venueStatus}
             suggestedVenue={suggestedVenue}
             confirmedVenue={confirmedVenue}
+            candidates={venueCandidates}
             candidateCount={venueCandidates.length}
             unavailableReason={venueUnavailableReason}
-            onConfirm={() => suggestedVenue && confirmVenue(suggestedVenue)}
+            onSelect={selectChangedVenue}
             onChooseAnother={() => setVenuePickerOpen(true)}
             onSkip={skipVenue}
             onAddVenue={() => {
@@ -465,7 +543,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
           <View style={{ flexDirection: "row", gap: 10 }}>
             <Pressable
               onPress={() => void openCamera()}
-              disabled={cameraOpening}
+              disabled={cameraOpening || submitting}
               style={{
                 flex: 1,
                 alignItems: "center",
@@ -480,7 +558,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
             </Pressable>
             <Pressable
               onPress={() => void openLibrary()}
-              disabled={cameraOpening}
+              disabled={cameraOpening || submitting}
               style={{
                 flex: 1,
                 alignItems: "center",
@@ -507,7 +585,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
             }}
           >
             <Text style={{ color: canSubmit ? theme.colors.textOnPrimary : theme.colors.textMuted, fontWeight: "900", fontSize: 16 }}>
-              {uploadStatus === "uploading" ? "Uploading Photo..." : "Log Beer"}
+              {submitting ? "Stamping..." : uploadStatus === "uploading" ? "Uploading Photo..." : "Log Beer"}
             </Text>
           </Pressable>
         </ScrollView>
@@ -547,9 +625,10 @@ function NearbyVenueCard({
   status,
   suggestedVenue,
   confirmedVenue,
+  candidates,
   candidateCount,
   unavailableReason,
-  onConfirm,
+  onSelect,
   onChooseAnother,
   onSkip,
   onAddVenue
@@ -557,9 +636,10 @@ function NearbyVenueCard({
   status: VenueLookupStatus;
   suggestedVenue: VenueCandidate | null;
   confirmedVenue: VenueCandidate | null;
+  candidates: VenueCandidate[];
   candidateCount: number;
   unavailableReason: VenueUnavailableReason | null;
-  onConfirm: () => void;
+  onSelect: (venue: VenueCandidate) => void;
   onChooseAnother: () => void;
   onSkip: () => void;
   onAddVenue: () => void;
@@ -569,7 +649,7 @@ function NearbyVenueCard({
   const isConfirmed = status === "confirmed" && confirmedVenue;
   const isSkipped = status === "skipped";
   const isUnavailable = status === "unavailable" || status === "error";
-  const hasVenueChoices = status === "suggested" && candidateCount > 0;
+  const recommendedVenues = status === "suggested" ? candidates.slice(0, 3) : [];
 
   return (
     <View
@@ -612,50 +692,44 @@ function NearbyVenueCard({
         </View>
       </View>
 
-      {status === "suggested" && suggestedVenue ? (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Pressable
-            onPress={onConfirm}
-            style={{
-              flex: 1,
-              alignItems: "center",
-              justifyContent: "center",
-              backgroundColor: theme.colors.primary,
-              borderRadius: theme.radius.pill,
-              paddingVertical: 9
-            }}
-          >
-            <Text style={{ color: theme.colors.textOnPrimary, fontWeight: "900" }}>Yes</Text>
-          </Pressable>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+      {recommendedVenues.length ? (
+        <View style={{ gap: 6 }}>
+          {recommendedVenues.map((candidate, index) => {
+            const highlighted = suggestedVenue ? sameVenue(candidate, suggestedVenue) : index === 0;
+            return (
+              <Pressable
+                key={`${candidate.provider}:${candidate.providerPlaceId}`}
+                onPress={() => onSelect(candidate)}
+                style={({ pressed }) => ({
+                  minHeight: 46,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 9,
+                  borderRadius: theme.radius.md,
+                  borderWidth: 1,
+                  borderColor: highlighted ? theme.colors.primary : theme.colors.cardBorder,
+                  backgroundColor: highlighted ? theme.colors.primarySoft : theme.colors.surfaceAlt,
+                  paddingHorizontal: 10,
+                  paddingVertical: 8,
+                  opacity: pressed ? 0.78 : 1
+                })}
+              >
+                <Ionicons name={highlighted ? "location" : "location-outline"} color={highlighted ? theme.colors.primary : theme.colors.iconSecondary} size={17} />
+                <View style={{ flex: 1 }}>
+                  <Text numberOfLines={1} style={{ color: theme.colors.textPrimary, fontWeight: "900", fontSize: 14 }}>{candidate.name}</Text>
+                  <Text numberOfLines={1} style={{ color: theme.colors.textSecondary, marginTop: 2, fontSize: 12 }}>{venueMeta(candidate)}</Text>
+                </View>
+              </Pressable>
+            );
+          })}
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12, paddingTop: 1 }}>
             <Pressable onPress={onChooseAnother} hitSlop={8} style={{ paddingVertical: 5 }}>
-              <Text style={{ color: theme.colors.textPrimary, fontWeight: "900" }}>Change</Text>
+              <Text style={{ color: theme.colors.primary, fontWeight: "900" }}>{candidateCount > 3 ? `See all ${candidateCount}` : "Search"}</Text>
             </Pressable>
             <Pressable onPress={onSkip} hitSlop={8} style={{ paddingVertical: 5 }}>
               <Text style={{ color: theme.colors.textSecondary, fontWeight: "900" }}>Skip</Text>
             </Pressable>
           </View>
-        </View>
-      ) : null}
-
-      {hasVenueChoices && !suggestedVenue ? (
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-          <Pressable
-            onPress={onChooseAnother}
-            style={{
-              flex: 1,
-              alignItems: "center",
-              justifyContent: "center",
-              backgroundColor: theme.colors.primary,
-              borderRadius: theme.radius.pill,
-              paddingVertical: 9
-            }}
-          >
-            <Text style={{ color: theme.colors.textOnPrimary, fontWeight: "900" }}>Choose venue</Text>
-          </Pressable>
-          <Pressable onPress={onSkip} hitSlop={8} style={{ paddingVertical: 4, paddingHorizontal: 4 }}>
-            <Text style={{ color: theme.colors.textSecondary, fontWeight: "900" }}>Skip</Text>
-          </Pressable>
         </View>
       ) : null}
 
@@ -932,8 +1006,7 @@ function venueCardBody(status: VenueLookupStatus, venue: VenueCandidate | null, 
   if (status === "loading" || status === "idle") return "Finding nearby places...";
   if (status === "confirmed" && venue) return `Venue confirmed: ${venue.name}`;
   if (status === "skipped") return "Venue skipped for this log.";
-  if (status === "suggested" && !venue) return "Nearby venue matches found. Choose the correct place or skip.";
-  if (status === "suggested" && venue) return `Looks like you're at ${venue.name}.`;
+  if (status === "suggested") return "Pick the matching place below or search.";
   if (status === "error") return "Nearby venue lookup is unavailable. You can still log your beer.";
   if (unavailableReason === "no_venues") return "No nearby venues found. You can still log your beer.";
   return "Location permission is off. You can still log your beer.";
@@ -942,6 +1015,16 @@ function venueCardBody(status: VenueLookupStatus, venue: VenueCandidate | null, 
 function venueMeta(venue: VenueCandidate) {
   const distance = typeof venue.distanceMeters === "number" ? `${Math.round(venue.distanceMeters)} m away` : undefined;
   return [distance, venue.category, venue.address].filter(Boolean).join(" · ") || "Nearby place";
+}
+
+function cleanPlacePart(value?: string | null) {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed.toLowerCase() === "unknown") return undefined;
+  return trimmed;
+}
+
+function cityFromGeocodePlace(place?: { city?: string | null; district?: string | null; subregion?: string | null } | null) {
+  return cleanPlacePart(place?.city) ?? cleanPlacePart(place?.district) ?? cleanPlacePart(place?.subregion);
 }
 
 function filterVenuesByQuery(venues: VenueCandidate[], query: string) {

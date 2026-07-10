@@ -4,12 +4,11 @@ import { Alert, Image } from "react-native";
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Avatar } from "@/components/Avatar";
 import { CommentButton, CommentsSheet } from "@/components/CommentsSheet";
-import { LikersModal } from "@/components/LikersModal";
-import { ZoomablePhotoModal } from "@/components/ZoomablePhotoModal";
-import { buildCloudflareImageUrl } from "@/services/photoStorage";
+import { PostDetailModal } from "@/components/PostDetailModal";
 import { BeerCheckIn, BeerComment, ModerationReportReason } from "@/types";
 import { theme } from "@/theme";
 import { broadPlaceLabel, timeAgo } from "@/utils/format";
+import { checkInPhotoUrlCandidates } from "@/utils/photoUrls";
 import { reactionUsersForCheckIn } from "@/utils/reactions";
 
 type Props = {
@@ -27,18 +26,20 @@ type Props = {
 export function ActivityItem({ item, currentUserId, onReact, onAddComment, onDeleteComment, onReportComment, onEdit, onDelete, variant = "compact" }: Props) {
   const reacted = item.reactedBy.includes(currentUserId);
   const canDelete = item.userId === currentUserId && Boolean(onDelete);
-  const photoSource = buildCloudflareImageUrl(item.photoCloudflareImageId, "feed") ?? item.photoUrl ?? item.photoUri;
+  const [imageFailed, setImageFailed] = useState(false);
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const photoSources = checkInPhotoUrlCandidates(item, "feed");
+  const fullPhotoSources = checkInPhotoUrlCandidates(item, "full");
+  const photoSource = photoSources[photoIndex];
   const thumbnailSource = photoSource ?? item.photoThumbnailUrl;
-  const fullPhotoSource = photoSource ?? item.photoThumbnailUrl;
+  const fullPhotoSource = fullPhotoSources.find((url) => url === photoSource) ?? fullPhotoSources[0] ?? photoSource ?? item.photoThumbnailUrl;
   const placeLabel = broadPlaceLabel(item.location);
   const normalizedBrewery = item.brewery.toLowerCase();
   const showBrewery = item.brewery && !normalizedBrewery.includes("check-in") && !normalizedBrewery.includes("pintly log");
   const isGenericPhotoStamp = ["photo stamp", "beer log"].includes(item.beerName.trim().toLowerCase());
   const loggedCopy = "logged a beer";
-  const [imageFailed, setImageFailed] = useState(false);
-  const [photoOpen, setPhotoOpen] = useState(false);
+  const [postDetailOpen, setPostDetailOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  const [likersOpen, setLikersOpen] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [photoSize, setPhotoSize] = useState<{ width: number; height: number } | undefined>();
   const lastPhotoTap = useRef(0);
@@ -48,22 +49,28 @@ export function ActivityItem({ item, currentUserId, onReact, onAddComment, onDel
 
   useEffect(() => {
     setImageFailed(false);
+    setPhotoIndex(0);
     setPhotoSize(undefined);
-    if (fullPhotoSource && (variant === "photo" || photoOpen)) {
-      Image.getSize(
-        fullPhotoSource,
-        (width, height) => setPhotoSize({ width, height }),
-        () => setPhotoSize(undefined)
-      );
-    }
+  }, [item.id, item.photoCloudflareImageId, item.photoUrl, item.photoUri, item.photoThumbnailUrl]);
 
-    return () => {
+  useEffect(() => {
+    if (!fullPhotoSource || (variant !== "photo" && !postDetailOpen)) return;
+    Image.getSize(
+      fullPhotoSource,
+      (width, height) => setPhotoSize({ width, height }),
+      () => setPhotoSize(undefined)
+    );
+  }, [fullPhotoSource, postDetailOpen, variant]);
+
+  useEffect(
+    () => () => {
       if (singleTapTimer.current) {
         clearTimeout(singleTapTimer.current);
         singleTapTimer.current = null;
       }
-    };
-  }, [fullPhotoSource, item.id, photoOpen, variant]);
+    },
+    []
+  );
 
   useEffect(() => {
     if (photoSource) void Image.prefetch(photoSource);
@@ -79,7 +86,7 @@ export function ActivityItem({ item, currentUserId, onReact, onAddComment, onDel
 
   function handlePhotoPress() {
     if (!onReact) {
-      setPhotoOpen(true);
+      setPostDetailOpen(true);
       return;
     }
 
@@ -96,21 +103,41 @@ export function ActivityItem({ item, currentUserId, onReact, onAddComment, onDel
 
     lastPhotoTap.current = now;
     singleTapTimer.current = setTimeout(() => {
-      setPhotoOpen(true);
+      setPostDetailOpen(true);
       singleTapTimer.current = null;
       lastPhotoTap.current = 0;
     }, 260);
   }
 
   function handlePostPress() {
-    if (!onReact || reacted) return;
+    if (!onReact) {
+      setPostDetailOpen(true);
+      return;
+    }
     const now = Date.now();
     if (now - lastPostTap.current < 280) {
+      if (singleTapTimer.current) {
+        clearTimeout(singleTapTimer.current);
+        singleTapTimer.current = null;
+      }
       lastPostTap.current = 0;
-      onReact(item.id);
+      if (!reacted) onReact(item.id);
       return;
     }
     lastPostTap.current = now;
+    singleTapTimer.current = setTimeout(() => {
+      setPostDetailOpen(true);
+      singleTapTimer.current = null;
+      lastPostTap.current = 0;
+    }, 280);
+  }
+
+  function handleImageError() {
+    if (photoIndex < photoSources.length - 1) {
+      setPhotoIndex((index) => index + 1);
+      return;
+    }
+    setImageFailed(true);
   }
 
   return (
@@ -138,7 +165,7 @@ export function ActivityItem({ item, currentUserId, onReact, onAddComment, onDel
           <Text style={{ color: theme.colors.textMuted, marginTop: 2, fontSize: 12 }}>{timeAgo(item.createdAt)}</Text>
         </View>
         {variant === "compact" ? (
-          <PhotoThumb photoSource={thumbnailSource} imageFailed={imageFailed} onPress={handlePhotoPress} onError={() => setImageFailed(true)} />
+          <PhotoThumb photoSource={thumbnailSource} imageFailed={imageFailed} onPress={handlePhotoPress} onError={handleImageError} />
         ) : null}
         <View style={{ alignItems: "center", gap: 8 }}>
           {canDelete && onEdit ? (
@@ -160,7 +187,7 @@ export function ActivityItem({ item, currentUserId, onReact, onAddComment, onDel
           photoSize={photoSize}
           imageFailed={imageFailed}
           onPress={handlePhotoPress}
-          onError={() => setImageFailed(true)}
+          onError={handleImageError}
         />
       ) : null}
       {item.note ? <CaptionText text={item.note} /> : null}
@@ -186,7 +213,7 @@ export function ActivityItem({ item, currentUserId, onReact, onAddComment, onDel
             size={14}
           />
           <Text style={{ color: item.photoSyncStatus === "failed" ? theme.colors.danger : theme.colors.primary, fontWeight: "900", fontSize: 12 }}>
-            {photoSyncCopy(item.photoSyncStatus)}
+            {item.photoSyncStatus === "failed" && item.photoSyncError ? item.photoSyncError.slice(0, 64) : photoSyncCopy(item.photoSyncStatus)}
           </Text>
         </View>
       ) : null}
@@ -223,29 +250,67 @@ export function ActivityItem({ item, currentUserId, onReact, onAddComment, onDel
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
           {onAddComment && onDeleteComment ? <CommentButton count={item.comments.length} onPress={() => setCommentsOpen(true)} theme={theme} compact /> : null}
-          <View
-            style={{
-              height: 36,
-              minWidth: 52,
+          <Pressable
+            onPress={(event) => {
+              event.stopPropagation();
+              if (singleTapTimer.current) {
+                clearTimeout(singleTapTimer.current);
+                singleTapTimer.current = null;
+              }
+              lastPostTap.current = 0;
+              lastPhotoTap.current = 0;
+              onReact?.(item.id);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={reacted ? "Unlike post" : "Like post"}
+            hitSlop={10}
+            style={({ pressed }) => ({
+              height: 40,
+              minWidth: 62,
               flexDirection: "row",
               alignItems: "center",
               justifyContent: "center",
               gap: 5,
               borderRadius: theme.radius.pill,
-              backgroundColor: theme.colors.card
-            }}
+              backgroundColor: theme.colors.card,
+              opacity: pressed ? 0.72 : 1,
+              paddingHorizontal: 12
+            })}
           >
-            <Pressable onPress={() => onReact?.(item.id)} hitSlop={12} style={{ height: 36, justifyContent: "center", paddingLeft: 11 }}>
+            <View style={{ height: 40, justifyContent: "center" }}>
               <Ionicons name={reacted ? "heart" : "heart-outline"} color={reacted ? theme.colors.error : theme.colors.textPrimary} size={18} />
-            </Pressable>
-            <Pressable onPress={() => setLikersOpen(true)} hitSlop={12} style={{ height: 36, justifyContent: "center", paddingRight: 11, minWidth: 22 }}>
+            </View>
+            <View style={{ height: 40, justifyContent: "center", minWidth: 22 }}>
               <Text style={{ color: reacted ? theme.colors.error : theme.colors.textPrimary, fontWeight: "900", fontSize: 13 }}>{item.reactions}</Text>
-            </Pressable>
-          </View>
+            </View>
+          </Pressable>
         </View>
       </View>
-      <PhotoViewer visible={photoOpen && Boolean(fullPhotoSource) && !imageFailed} photoSource={fullPhotoSource} onClose={() => setPhotoOpen(false)} />
-      <LikersModal visible={likersOpen} reactionUsers={reactionUsers} onClose={() => setLikersOpen(false)} theme={theme} />
+      <PostDetailModal
+        visible={postDetailOpen}
+        checkIn={item}
+        currentUserId={currentUserId}
+        photoUri={!imageFailed ? fullPhotoSource : undefined}
+        reacted={reacted}
+        reactionUsers={reactionUsers}
+        onReact={onReact}
+        onAddComment={onAddComment}
+        onDeleteComment={onDeleteComment}
+        onReportComment={
+          onReportComment
+            ? ({ comment, reason, details }) =>
+                onReportComment({
+                  checkInId: item.id,
+                  groupId: item.groupIds[0],
+                  comment,
+                  reason,
+                  details
+                })
+            : undefined
+        }
+        onClose={() => setPostDetailOpen(false)}
+        theme={theme}
+      />
       {onAddComment && onDeleteComment ? (
         <CommentsSheet
           visible={commentsOpen}
@@ -442,16 +507,4 @@ function EditCheckInModal({
       </View>
     </Modal>
   );
-}
-
-function PhotoViewer({
-  visible,
-  photoSource,
-  onClose
-}: {
-  visible: boolean;
-  photoSource?: string;
-  onClose: () => void;
-}) {
-  return <ZoomablePhotoModal visible={visible} uri={photoSource} onClose={onClose} theme={theme} />;
 }
