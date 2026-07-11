@@ -3,7 +3,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Image, Keyboard, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { checkInLocationEnabled } from "@/config/features";
+import { checkInVenueEnabled } from "@/config/features";
 import { compressBeerPhoto } from "@/services/photoCompression";
 import { isPhotoStorageConfigured } from "@/services/photoStorage";
 import { enqueuePhotoUpload } from "@/services/photoUploadQueue";
@@ -75,7 +75,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
 
     if (visible) {
       reset();
-      if (checkInLocationEnabled) void detectNearbyVenue();
+      void detectNearbyVenue();
       if (!cameraLaunchedForSession.current) {
         cameraLaunchedForSession.current = true;
         const timer = setTimeout(() => {
@@ -224,6 +224,11 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
       };
       setCoordinates(nextCoordinates);
       void fillReverseGeocode(nextCoordinates);
+
+      if (!checkInVenueEnabled) {
+        setVenueStatus("skipped");
+        return;
+      }
 
       const candidates = await withTimeout(searchNearbyVenues(nextCoordinates), venueLookupTimeoutMs, "Venue lookup timed out.");
       if (venueSearchId.current !== searchId) return;
@@ -381,12 +386,12 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
         userExplicitlySkippedVenue,
         venueUnavailableReason
       });
-      const stampLocation = checkInLocationEnabled ? await resolveStampLocation(finalVenue.venue) : { city: "" };
+      const stampLocation = await resolveStampLocation(finalVenue.venue);
       const stampCity = stampLocation.city;
       const result = checkInBeer({
         beerName: "Beer log",
         quantity: 1,
-        brewery: checkInLocationEnabled ? finalVenue.venue?.name ?? `Pintly log - ${stampCity}` : "Beer log",
+        brewery: finalVenue.venue?.name ?? "Beer log",
         city: stampCity,
         state: stampLocation.state,
         country: stampLocation.country,
@@ -397,9 +402,9 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
         photoImageHeight: photoSize?.height,
         photoSyncStatus: "queued",
         countSource: "manual",
-        latitude: checkInLocationEnabled ? coordinates?.latitude : undefined,
-        longitude: checkInLocationEnabled ? coordinates?.longitude : undefined,
-        venue: checkInLocationEnabled ? finalVenue.venue : undefined,
+        latitude: coordinates?.latitude,
+        longitude: coordinates?.longitude,
+        venue: checkInVenueEnabled ? finalVenue.venue : undefined,
         venueProvider: finalVenue.provider,
         venueConfirmed: finalVenue.confirmed,
         venueConfirmationStatus: finalVenue.confirmationStatus,
@@ -505,7 +510,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
               <Text style={{ color: theme.colors.textSecondary, lineHeight: 18 }}>{photoMessage}</Text>
             </View>
           ) : null}
-          {checkInLocationEnabled ? (
+          {checkInVenueEnabled ? (
             <NearbyVenueCard
               status={venueStatus}
               suggestedVenue={suggestedVenue}
@@ -592,7 +597,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
             </Text>
           </Pressable>
         </ScrollView>
-        {checkInLocationEnabled ? (
+        {checkInVenueEnabled ? (
           <VenuePickerModal
             visible={venuePickerOpen}
             venues={venueCandidates.slice(0, 5)}
