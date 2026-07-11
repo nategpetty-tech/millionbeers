@@ -106,7 +106,8 @@ Deno.serve(async (request) => {
   const tokens = Array.from(new Set((tokenRows ?? []).map((tokenRow: { token: string }) => tokenRow.token).filter(isExpoPushToken)));
   if (!tokens.length) return json({ ok: true, sent: 0 });
 
-  const messageBody = `${actorName} is having a beer ${placePhrase(row)}`;
+  const locationPhrase = placePhrase(row);
+  const messageBody = `${actorName} is having a beer${locationPhrase ? ` ${locationPhrase}` : ""}`;
   const messages = tokens.map((to) => ({
     to,
     title: "Pintly",
@@ -149,7 +150,7 @@ function placePhrase(checkIn: CheckInRow) {
     return `at ${checkIn.venue_name.trim()}`;
   }
   const cityState = [checkIn.city, checkIn.state].map((part) => part?.trim()).filter(Boolean).join(", ");
-  return cityState ? `in ${cityState}` : "nearby";
+  return cityState ? `in ${cityState}` : "";
 }
 
 function isExpoPushToken(token: string) {

@@ -3,6 +3,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Image, Keyboard, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { checkInLocationEnabled } from "@/config/features";
 import { compressBeerPhoto } from "@/services/photoCompression";
 import { isPhotoStorageConfigured } from "@/services/photoStorage";
 import { enqueuePhotoUpload } from "@/services/photoUploadQueue";
@@ -74,7 +75,7 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
 
     if (visible) {
       reset();
-      void detectNearbyVenue();
+      if (checkInLocationEnabled) void detectNearbyVenue();
       if (!cameraLaunchedForSession.current) {
         cameraLaunchedForSession.current = true;
         const timer = setTimeout(() => {
@@ -380,12 +381,12 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
         userExplicitlySkippedVenue,
         venueUnavailableReason
       });
-      const stampLocation = await resolveStampLocation(finalVenue.venue);
+      const stampLocation = checkInLocationEnabled ? await resolveStampLocation(finalVenue.venue) : { city: "" };
       const stampCity = stampLocation.city;
       const result = checkInBeer({
         beerName: "Beer log",
         quantity: 1,
-        brewery: finalVenue.venue?.name ?? `Pintly log - ${stampCity}`,
+        brewery: checkInLocationEnabled ? finalVenue.venue?.name ?? `Pintly log - ${stampCity}` : "Beer log",
         city: stampCity,
         state: stampLocation.state,
         country: stampLocation.country,
@@ -396,9 +397,9 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
         photoImageHeight: photoSize?.height,
         photoSyncStatus: "queued",
         countSource: "manual",
-        latitude: coordinates?.latitude,
-        longitude: coordinates?.longitude,
-        venue: finalVenue.venue,
+        latitude: checkInLocationEnabled ? coordinates?.latitude : undefined,
+        longitude: checkInLocationEnabled ? coordinates?.longitude : undefined,
+        venue: checkInLocationEnabled ? finalVenue.venue : undefined,
         venueProvider: finalVenue.provider,
         venueConfirmed: finalVenue.confirmed,
         venueConfirmationStatus: finalVenue.confirmationStatus,
@@ -504,21 +505,23 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
               <Text style={{ color: theme.colors.textSecondary, lineHeight: 18 }}>{photoMessage}</Text>
             </View>
           ) : null}
-          <NearbyVenueCard
-            status={venueStatus}
-            suggestedVenue={suggestedVenue}
-            confirmedVenue={confirmedVenue}
-            candidates={venueCandidates}
-            candidateCount={venueCandidates.length}
-            unavailableReason={venueUnavailableReason}
-            onSelect={selectChangedVenue}
-            onChooseAnother={() => setVenuePickerOpen(true)}
-            onSkip={skipVenue}
-            onAddVenue={() => {
-              if (venueCandidates.length) setVenuePickerOpen(true);
-              else void detectNearbyVenue();
-            }}
-          />
+          {checkInLocationEnabled ? (
+            <NearbyVenueCard
+              status={venueStatus}
+              suggestedVenue={suggestedVenue}
+              confirmedVenue={confirmedVenue}
+              candidates={venueCandidates}
+              candidateCount={venueCandidates.length}
+              unavailableReason={venueUnavailableReason}
+              onSelect={selectChangedVenue}
+              onChooseAnother={() => setVenuePickerOpen(true)}
+              onSkip={skipVenue}
+              onAddVenue={() => {
+                if (venueCandidates.length) setVenuePickerOpen(true);
+                else void detectNearbyVenue();
+              }}
+            />
+          ) : null}
           <Field label="Note" value={note} onChangeText={setNote} placeholder="Optional note" compact />
           <View
             style={{
@@ -589,14 +592,16 @@ export function CheckInModal({ visible, onClose, defaultGroupIds = emptyGroupIds
             </Text>
           </Pressable>
         </ScrollView>
-        <VenuePickerModal
-          visible={venuePickerOpen}
-          venues={venueCandidates.slice(0, 5)}
-          coordinates={coordinates}
-          onSelect={selectChangedVenue}
-          onSkip={skipVenue}
-          onClose={() => setVenuePickerOpen(false)}
-        />
+        {checkInLocationEnabled ? (
+          <VenuePickerModal
+            visible={venuePickerOpen}
+            venues={venueCandidates.slice(0, 5)}
+            coordinates={coordinates}
+            onSelect={selectChangedVenue}
+            onSkip={skipVenue}
+            onClose={() => setVenuePickerOpen(false)}
+          />
+        ) : null}
       </View>
     </Modal>
   );

@@ -857,7 +857,7 @@ function stampLocationKey(log: BeerCheckIn) {
     return `${log.location.latitude.toFixed(4)},${log.location.longitude.toFixed(4)}`;
   }
   const label = broadPlaceLabel(log.location);
-  return label === "Location hidden" ? "" : normalizePlaceText(label);
+  return ["Location hidden", "No location added"].includes(label) ? "" : normalizePlaceText(label);
 }
 
 function logsForMonth(logs: BeerCheckIn[], month: Date) {

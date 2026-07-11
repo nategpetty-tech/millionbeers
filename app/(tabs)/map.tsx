@@ -170,6 +170,7 @@ function buildPlacePins(logs: BeerCheckIn[]): PlacePin[] {
   const pins: PlacePin[] = [];
 
   logs
+    .filter(hasPlaceData)
     .slice()
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
     .forEach((log) => {
@@ -524,6 +525,14 @@ function hasNamedPlace(log: BeerCheckIn) {
   if (log.venueConfirmationStatus === "confirmed" && log.venueName?.trim()) return true;
   const brewery = log.brewery?.trim();
   return Boolean(brewery && !["photo stamp", "beer log", "pintly log", "check-in"].some((value) => brewery.toLowerCase().includes(value)));
+}
+
+function hasPlaceData(log: BeerCheckIn) {
+  return (
+    hasNamedPlace(log) ||
+    hasCoordinates(log) ||
+    Boolean(log.location.city.trim() || log.location.state?.trim() || log.location.country?.trim())
+  );
 }
 
 function placeSubtitle(pin: PlacePin) {

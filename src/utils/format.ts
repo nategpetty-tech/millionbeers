@@ -26,7 +26,7 @@ export function broadPlaceLabel(location: { city?: string; state?: string; count
   if (city && !isUnitedStates && country) return `${city}, ${country}`;
   if (city && state) return `${city}, ${state}`;
   if (city && country) return `${city}, ${country}`;
-  return city || state || country || "Location hidden";
+  return city || state || country || "No location added";
 }
 
 function cleanPlacePart(value?: string) {
